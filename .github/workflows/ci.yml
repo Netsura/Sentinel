@@ -1,0 +1,40 @@
+name: Sentinel CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sentinel
+          POSTGRES_PASSWORD: sentinel
+          POSTGRES_DB: sentinel
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U sentinel -d sentinel"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+    env:
+      DATABASE_URL: postgresql://sentinel:sentinel@localhost:5432/sentinel?schema=public
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run db:generate
+      - run: npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
+      - run: npx nx run-many -t build test --projects=api,scanner,web --outputStyle=static
+      - run: npm audit --audit-level=high

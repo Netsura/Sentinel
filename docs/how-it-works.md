@@ -1,0 +1,135 @@
+# Sentinel: How It Starts and Works
+
+## 1. Start the local stack
+
+Prerequisites: Node.js 22+, npm, and Docker Desktop.
+
+```sh
+cp .env.example .env
+npm install
+npm run db:generate
+docker compose up -d
+DATABASE_URL='postgresql://sentinel:sentinel@localhost:5432/sentinel?schema=public' \
+REDIS_URL='redis://localhost:6379' \
+API_PORT=3001 npm run dev:api
+```
+
+In a second terminal:
+
+```sh
+NEXT_PUBLIC_API_URL=http://localhost:3001/api npm run dev:web
+```
+
+Open:
+
+- Web dashboard: `http://localhost:3000`
+- API: `http://localhost:3001/api`
+- Swagger UI: `http://localhost:3001/api/docs`
+- Liveness: `http://localhost:3001/api/health`
+- Readiness: `http://localhost:3001/api/ready`
+- Metrics: `http://localhost:3001/api/metrics`
+
+Apply database migrations when the schema changes:
+
+```sh
+DATABASE_URL='postgresql://sentinel:sentinel@localhost:5432/sentinel?schema=public' \
+npx prisma migrate dev --schema=packages/database/prisma/schema.prisma
+```
+
+## 2. System flow
+
+```mermaid
+flowchart LR
+  Browser[Next.js browser] -->|JWT REST requests| API[NestJS API]
+  Browser -->|scan.subscribe| WS[WebSocket gateway]
+  API --> DB[(PostgreSQL / Prisma)]
+  API --> Queue[(Redis / BullMQ)]
+  Queue --> Worker[Scanner worker]
+  Worker --> Target[Authorized public target]
+  Worker --> DB
+  Worker -->|scan.progress| Queue
+  Queue --> WS
+```
+
+## 3. Authentication flow
+
+1. The browser submits credentials to `POST /api/auth/login`.
+2. The API verifies the Argon2 password hash.
+3. The API returns a short-lived access token and a refresh token.
+4. Refresh tokens are stored only as SHA-256 hashes in PostgreSQL.
+5. `POST /api/auth/refresh` rotates the refresh session and revokes the old one.
+6. Protected requests send `Authorization: Bearer <accessToken>`.
+7. Workspace resources also require `x-workspace-id` and membership validation.
+8. Password reset and email verification tokens are hashed, expiring, and single-use.
+
+The current frontend login client keeps tokens in `sessionStorage` for the development shell. Production should move refresh handling to secure, HttpOnly cookies.
+
+## 4. Workspace and asset flow
+
+1. An authenticated user creates a workspace.
+2. The creator becomes the OWNER.
+3. OWNER users add registered members and assign ANALYST or VIEWER roles.
+4. Assets are normalized and checked for URLs, localhost, private IPs, and metadata ranges.
+5. Domain ownership uses a DNS TXT record at `_sentinel.<domain>`.
+6. Active scans are rejected until the asset is VERIFIED.
+7. Every query includes both the authenticated user and workspace boundary to prevent IDOR.
+
+## 5. Scan flow
+
+A scan request is intentionally short-lived:
+
+```text
+POST /api/scans
+  -> verify membership and asset ownership
+  -> require verification for active modes
+  -> create QUEUED scan in PostgreSQL
+  -> enqueue BullMQ job in Redis
+  -> return scanId immediately
+```
+
+The scanner worker then:
+
+1. Resolves DNS and rejects private or metadata addresses.
+2. Resolves again immediately before the request and rejects address-set changes.
+3. Performs TLS certificate inspection.
+4. Performs safe HTTPS and header checks.
+5. Persists deterministic findings.
+6. Calculates a deterministic score.
+7. Updates scan stage/progress.
+8. Publishes progress through Redis for WebSocket subscribers.
+9. Creates an in-app completion notification.
+
+Workers never receive arbitrary URLs from the browser. They receive an asset ID and load the authorized target from PostgreSQL.
+
+## 6. Findings, reports, and schedules
+
+- Findings belong to a workspace, asset, and scan.
+- Analysts can acknowledge, resolve, or mark findings false positive.
+- Status changes create immutable audit records.
+- `GET /api/scans/diff?previous=<id>&current=<id>` compares findings across scans.
+- Completed scans can produce JSON or CSV reports.
+- Scheduled scans use BullMQ repeat jobs and support daily, weekly, monthly, pause, resume, and delete operations.
+- Notifications are workspace- and user-scoped.
+
+## 7. Production startup
+
+Production uses `docker-compose.prod.yml`:
+
+```sh
+cp .env.example .env
+# Set strong database and JWT secrets in .env
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Nginx exposes the web application and forwards `/api/` and WebSocket traffic to the API. The scanner container runs as a non-root user with dropped capabilities, no-new-privileges, a read-only filesystem, CPU/memory limits, and a small temporary filesystem.
+
+## 8. Verification commands
+
+```sh
+npm run db:generate
+CI=1 npx nx run-many -t build test --projects=api,scanner,web --outputStyle=static
+CI=1 npx nx e2e web-e2e --outputStyle=static
+npm audit --audit-level=high
+```
+
+The CI workflow repeats these checks with PostgreSQL and Redis service containers.

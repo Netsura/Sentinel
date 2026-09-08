@@ -1,0 +1,281 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkspaceRole {
+  OWNER
+  ANALYST
+  VIEWER
+}
+enum AssetType {
+  DOMAIN
+  SUBDOMAIN
+  IP
+}
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  FAILED
+  EXPIRED
+}
+enum ScanMode {
+  SAFE
+  NORMAL
+  AGGRESSIVE
+}
+enum ScanStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+enum Severity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+enum Confidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+enum FindingStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  FALSE_POSITIVE
+}
+enum ReportFormat {
+  JSON
+  CSV
+}
+enum ScheduleFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+enum NotificationType {
+  SCAN_COMPLETED
+  SCAN_FAILED
+  CRITICAL_FINDING
+  SCORE_DROP
+  FINDING_RESOLVED
+}
+
+model User {
+  id           String            @id @default(cuid())
+  email        String            @unique
+  passwordHash String
+  emailVerified DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  memberships  WorkspaceMember[]
+  scans        Scan[]
+  auditLogs    AuditLog[]
+  sessions     AuthSession[]
+  reports      Report[]
+  passwordResetTokens PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
+  scheduledScans ScheduledScan[]
+  notifications Notification[]
+}
+
+model AuthSession {
+  id               String    @id @default(cuid())
+  userId           String
+  refreshTokenHash String    @unique
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, usedAt])
+  @@index([expiresAt])
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, usedAt])
+  @@index([expiresAt])
+}
+
+model Workspace {
+  id        String            @id @default(cuid())
+  name      String
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  members   WorkspaceMember[]
+  assets    Asset[]
+  scans     Scan[]
+  findings  Finding[]
+  auditLogs AuditLog[]
+  reports   Report[]
+  scheduledScans ScheduledScan[]
+  notifications Notification[]
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(VIEWER)
+  createdAt   DateTime      @default(now())
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model Asset {
+  id               String             @id @default(cuid())
+  workspaceId      String
+  type             AssetType
+  value            String
+  verificationStatus VerificationStatus @default(PENDING)
+  verificationToken String?
+  lastScanAt       DateTime?
+  securityScore    Int?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  workspace        Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  scans            Scan[]
+  findings         Finding[]
+  scheduledScans   ScheduledScan[]
+  @@unique([workspaceId, value])
+  @@index([workspaceId, verificationStatus])
+}
+
+model Scan {
+  id          String     @id @default(cuid())
+  workspaceId String
+  assetId     String
+  startedById String
+  mode        ScanMode
+  status      ScanStatus @default(QUEUED)
+  stage       String     @default("QUEUED")
+  progress    Int        @default(0)
+  score       Int?
+  queuedAt    DateTime   @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime   @default(now())
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  asset       Asset      @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  startedBy   User       @relation(fields: [startedById], references: [id])
+  findings    Finding[]
+  reports     Report[]
+  @@index([workspaceId, createdAt])
+  @@index([assetId, createdAt])
+}
+
+model Finding {
+  id              String        @id @default(cuid())
+  workspaceId     String
+  assetId         String
+  scanId          String
+  title           String
+  description     String
+  severity        Severity
+  confidence      Confidence
+  category        String
+  evidence        String
+  recommendation  String
+  status          FindingStatus @default(OPEN)
+  references      Json?
+  firstDetectedAt DateTime      @default(now())
+  lastDetectedAt  DateTime      @default(now())
+  resolvedAt      DateTime?
+  workspace       Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  asset           Asset         @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  scan            Scan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  @@index([workspaceId, status, severity])
+  @@index([assetId, lastDetectedAt])
+}
+
+model AuditLog {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  action      String
+  resource    String
+  resourceId  String?
+  ipAddress   String?
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id])
+  @@index([workspaceId, createdAt])
+}
+
+
+model Report {
+  id          String       @id @default(cuid())
+  workspaceId String
+  scanId      String
+  createdById String
+  format      ReportFormat
+  content     Json
+  createdAt   DateTime     @default(now())
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  scan        Scan         @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  createdBy   User         @relation(fields: [createdById], references: [id])
+  @@index([workspaceId, createdAt])
+  @@index([scanId])
+}
+
+model ScheduledScan {
+  id          String           @id @default(cuid())
+  workspaceId String
+  assetId     String
+  createdById String
+  mode        ScanMode
+  frequency   ScheduleFrequency
+  enabled     Boolean          @default(true)
+  nextRunAt   DateTime
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  asset       Asset            @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdBy   User             @relation(fields: [createdById], references: [id])
+  @@index([workspaceId, enabled, nextRunAt])
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  workspaceId String
+  userId      String
+  type        NotificationType
+  title       String
+  message     String
+  readAt      DateTime?
+  createdAt   DateTime         @default(now())
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, readAt, createdAt])
+  @@index([workspaceId, createdAt])
+}
