@@ -1,117 +1,129 @@
-import { PrismaClient, ScanMode, ScanStatus, Severity, Confidence } from '@prisma/client';
+import { NotificationType, PrismaClient, ScanStatus, ScheduleFrequency } from '@prisma/client';
 import { Job, Worker } from 'bullmq';
-import { promises as dns } from 'node:dns';
-import tls from 'node:tls';
 import Redis from 'ioredis';
+import { ScanCancelledError, ScanJobData, ScanRunner } from './scan-runner';
 
+const redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
 const prisma = new PrismaClient();
-const redisConnection = { url: process.env.REDIS_URL ?? 'redis://localhost:6379' } as never;
-const publisher = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', { lazyConnect: true });
+const publisher = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null });
+const runner = new ScanRunner(prisma, publisher);
 
-type ScanJob = { scanId: string; workspaceId: string; assetId: string; mode: ScanMode };
-type FindingInput = { title: string; description: string; severity: Severity; confidence: Confidence; category: string; evidence: string; recommendation: string };
+const SCHEDULE_INTERVALS: Record<ScheduleFrequency, number> = {
+  DAILY: 86_400_000,
+  WEEKLY: 604_800_000,
+  MONTHLY: 2_592_000_000,
+};
 
-new Worker<ScanJob>('scan', async (job) => runScan(job), { connection: redisConnection, concurrency: 2 });
+type ScheduledJobData = { scheduleId: string; workspaceId: string; assetId: string; mode: ScanJobData['mode'] };
 
-async function runScan(job: Job<ScanJob>) {
-  const { scanId, assetId } = job.data;
-  const scan = await prisma.scan.findUnique({ where: { id: scanId }, include: { asset: true } });
-  if (!scan || scan.assetId !== assetId) throw new Error('Scan target no longer exists');
+/**
+ * Repeat jobs carry a schedule id rather than a scan id, because the Scan row
+ * only exists once the occurrence actually fires. Materialize it here so both
+ * job shapes converge on the same runner.
+ */
+async function resolveScanJob(job: Job<ScanJobData | ScheduledJobData>): Promise<ScanJobData | null> {
+  if (job.name !== 'scheduled-scan') return job.data as ScanJobData;
 
-  await update(scanId, ScanStatus.RUNNING, 'INITIALIZING', 5);
-  const hostname = scan.asset.value;
-  const addresses = await resolvePublicAddresses(hostname);
+  const { scheduleId } = job.data as ScheduledJobData;
+  const schedule = await prisma.scheduledScan.findUnique({ where: { id: scheduleId } });
+  if (!schedule || !schedule.enabled) return null;
 
-  await update(scanId, ScanStatus.RUNNING, 'DNS', 20);
-  const findings: FindingInput[] = [];
-  await update(scanId, ScanStatus.RUNNING, 'TLS', 35);
-  findings.push(...await tlsFindings(hostname));
-  let response: Response;
-  try {
-    response = await fetch(`https://${hostname}`, { redirect: 'manual', signal: AbortSignal.timeout(10000), headers: { 'User-Agent': 'Sentinel-SafeScanner/1.0' } });
-  } catch {
-    findings.push({ title: 'HTTPS endpoint unavailable', description: 'The target did not complete a safe HTTPS request.', severity: Severity.MEDIUM, confidence: Confidence.MEDIUM, category: 'Availability', evidence: `https://${hostname} did not return a response`, recommendation: 'Ensure the service is reachable over HTTPS and presents a valid certificate.' });
-    await persist(scanId, findings);
-    return complete(scanId, 45);
-  }
+  const scan = await prisma.scan.create({
+    data: { workspaceId: schedule.workspaceId, assetId: schedule.assetId, startedById: schedule.createdById, mode: schedule.mode },
+  });
 
-  await update(scanId, ScanStatus.RUNNING, 'HTTP', 55);
-  const requestAddresses = await resolvePublicAddresses(hostname);
-  if (addresses.join('|') !== requestAddresses.join('|')) throw new Error('Target DNS changed during scan; refusing request');
-  const checks = [
-    ['Content-Security-Policy', Severity.MEDIUM, 'Configure a restrictive Content-Security-Policy.'],
-    ['Strict-Transport-Security', Severity.LOW, 'Enable HSTS after confirming HTTPS is available everywhere.'],
-    ['X-Content-Type-Options', Severity.LOW, 'Set X-Content-Type-Options to nosniff.'],
-  ] as const;
-  for (const [header, severity, recommendation] of checks) {
-    if (!response.headers.get(header)) findings.push({ title: `Missing ${header}`, description: `The ${header} response header was not present.`, severity, confidence: Confidence.HIGH, category: 'HTTP Configuration', evidence: `${header} was absent from the HTTPS response`, recommendation });
-  }
-  const server = response.headers.get('server');
-  if (server) findings.push({ title: 'Server technology disclosure', description: 'The response exposes a server implementation header.', severity: Severity.INFO, confidence: Confidence.HIGH, category: 'Information Disclosure', evidence: `Server: ${server}`, recommendation: 'Remove or minimize server-identifying response headers.' });
+  await prisma.scheduledScan.update({
+    where: { id: schedule.id },
+    data: { nextRunAt: new Date(Date.now() + SCHEDULE_INTERVALS[schedule.frequency]) },
+  });
 
-  await update(scanId, ScanStatus.RUNNING, 'SECURITY_CHECKS', 80);
-  await persist(scanId, findings);
-  return complete(scanId, score(findings));
+  const data: ScanJobData = { scanId: scan.id, workspaceId: schedule.workspaceId, assetId: schedule.assetId, mode: schedule.mode };
+  // Persist the id so the failure handler can mark this scan FAILED.
+  await job.updateData(data).catch(() => undefined);
+  return data;
 }
 
-async function tlsFindings(hostname: string): Promise<FindingInput[]> {
-  try {
-    const result = await new Promise<{ certificate: tls.PeerCertificate; protocol?: string }>((resolve, reject) => {
-      const socket = tls.connect({ host: hostname, port: 443, servername: hostname, rejectUnauthorized: false, timeout: 10000 }, () => {
-        const peer = socket.getPeerCertificate(true);
-        const protocol = socket.getProtocol() ?? undefined;
-        socket.end();
-        resolve({ certificate: peer, protocol });
-      });
-      socket.once('error', reject);
-      socket.once('timeout', () => { socket.destroy(); reject(new Error('TLS timeout')); });
-    });
-    const { certificate, protocol } = result;
-    if (!certificate.valid_to) throw new Error('Certificate metadata unavailable');
-    if (protocol === 'TLSv1' || protocol === 'TLSv1.1') return [{ title: 'Legacy TLS protocol enabled', description: 'The target negotiated a deprecated TLS protocol.', severity: Severity.HIGH, confidence: Confidence.HIGH, category: 'TLS', evidence: `Negotiated protocol: ${protocol}`, recommendation: 'Disable TLS 1.0 and TLS 1.1 and require TLS 1.2 or newer.' }];
-    const expiry = new Date(certificate.valid_to);
-    const daysUntilExpiry = Math.ceil((expiry.getTime() - Date.now()) / 86_400_000);
-    if (daysUntilExpiry <= 30) return [{ title: 'TLS certificate expires soon', description: 'The certificate expires within 30 days.', severity: daysUntilExpiry <= 7 ? Severity.HIGH : Severity.MEDIUM, confidence: Confidence.HIGH, category: 'TLS', evidence: `Certificate issued by ${certificate.issuer?.O ?? 'unknown'} expires on ${certificate.valid_to}; SAN: ${certificate.subjectaltname ?? 'unavailable'}`, recommendation: 'Renew the certificate before expiration and verify the complete certificate chain.' }];
-    return [];
-  } catch (error) {
-    return [{ title: 'TLS certificate validation failed', description: 'The target did not present a usable TLS certificate.', severity: Severity.HIGH, confidence: Confidence.HIGH, category: 'TLS', evidence: error instanceof Error ? error.message : 'TLS handshake failed', recommendation: 'Install a valid certificate for the target hostname and serve the complete chain.' }];
-  }
+const worker = new Worker<ScanJobData | ScheduledJobData>(
+  'scan',
+  async (job) => {
+    const started = Date.now();
+    const data = await resolveScanJob(job);
+    if (!data) {
+      console.log(JSON.stringify({ level: 'info', message: 'scan.skipped', reason: 'schedule missing or paused', job: job.id }));
+      return { skipped: true };
+    }
+
+    const result = await runner.run(data);
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        message: 'scan.completed',
+        scanId: data.scanId,
+        mode: data.mode,
+        score: result.score,
+        findings: result.findings,
+        requests: result.requests,
+        durationMs: Date.now() - started,
+      }),
+    );
+    return result;
+  },
+  { connection: { url: redisUrl } as never, concurrency: Number(process.env.SCANNER_CONCURRENCY ?? 2) },
+);
+
+worker.on('failed', async (job, error) => {
+  if (!job) return;
+
+  const cancelled = error instanceof ScanCancelledError || error?.name === 'ScanCancelledError';
+  const attemptsExhausted = (job.attemptsMade ?? 0) >= (job.opts.attempts ?? 1);
+  const scanId = (job.data as ScanJobData).scanId;
+
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      message: cancelled ? 'scan.cancelled' : 'scan.failed',
+      scanId,
+      attempt: job.attemptsMade,
+      error: error?.message ?? 'unknown error',
+    }),
+  );
+
+  if (cancelled || !attemptsExhausted || !scanId) return;
+
+  // Without this the scan would stay RUNNING forever once retries are spent.
+  const scan = await prisma.scan
+    .update({
+      where: { id: scanId },
+      data: { status: ScanStatus.FAILED, stage: 'FAILED', completedAt: new Date() },
+      include: { asset: { select: { value: true } } },
+    })
+    .catch(() => null);
+
+  if (!scan) return;
+
+  await prisma.notification
+    .create({
+      data: {
+        workspaceId: scan.workspaceId,
+        userId: scan.startedById,
+        type: NotificationType.SCAN_FAILED,
+        title: 'Scan failed',
+        message: `The ${scan.mode.toLowerCase()} scan of ${scan.asset.value} could not be completed: ${error?.message ?? 'unknown error'}`,
+      },
+    })
+    .catch(() => undefined);
+
+  await publisher.publish('scan.progress', JSON.stringify({ scanId, stage: 'FAILED', progress: 100 })).catch(() => undefined);
+});
+
+worker.on('ready', () => console.log(JSON.stringify({ level: 'info', message: 'scanner.ready', concurrency: worker.concurrency })));
+
+async function shutdown() {
+  await worker.close().catch(() => undefined);
+  await publisher.quit().catch(() => undefined);
+  await prisma.$disconnect().catch(() => undefined);
+  process.exit(0);
 }
 
-async function persist(scanId: string, findings: FindingInput[]) {
-  const scan = await prisma.scan.findUniqueOrThrow({ where: { id: scanId }, select: { workspaceId: true, assetId: true } });
-  if (findings.length) await prisma.finding.createMany({ data: findings.map((finding) => ({ ...finding, scanId, workspaceId: scan.workspaceId, assetId: scan.assetId })) });
-}
-
-async function complete(scanId: string, scoreValue: number) {
-  const scan = await prisma.scan.update({ where: { id: scanId }, data: { status: ScanStatus.COMPLETED, stage: 'COMPLETED', progress: 100, score: scoreValue, completedAt: new Date() } });
-  await prisma.notification.create({ data: { workspaceId: scan.workspaceId, userId: scan.startedById, type: 'SCAN_COMPLETED', title: 'Scan completed', message: `The ${scan.mode.toLowerCase()} scan is complete with a score of ${scoreValue}.` } });
-}
-
-async function update(scanId: string, status: ScanStatus, stage: string, progress: number) {
-  await prisma.scan.update({ where: { id: scanId }, data: { status, stage, progress, startedAt: new Date() } });
-  if (publisher.status === 'wait') await publisher.connect();
-  await publisher.publish('scan.progress', JSON.stringify({ scanId, stage, progress }));
-}
-
-function score(findings: FindingInput[]) {
-  const weights = { CRITICAL: 10, HIGH: 7, MEDIUM: 4, LOW: 1, INFO: 0 } as const;
-  const penalty = findings.reduce((total, finding) => total + weights[finding.severity], 0);
-  return Math.max(0, Math.min(100, 100 - penalty * 3));
-}
-
-function isPrivateAddress(address: string) {
-  if (address.includes(':')) return address === '::1' || address.startsWith('fc') || address.startsWith('fd') || address.startsWith('fe80:');
-  const octets = address.split('.').map(Number);
-  if (octets.length !== 4) return true;
-  const [first, second] = octets;
-  return first === 10 || first === 127 || first === 0 || (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168);
-}
-
-async function resolvePublicAddresses(hostname: string) {
-  const addresses = (await dns.lookup(hostname, { all: true, verbatim: true })).map(({ address }) => address).sort();
-  if (!addresses.length || addresses.some(isPrivateAddress)) throw new Error('Resolved target is not publicly routable');
-  return addresses;
-}
-
-process.once('SIGTERM', async () => { await publisher.quit(); await prisma.$disconnect(); process.exit(0); });
+process.once('SIGTERM', shutdown);
+process.once('SIGINT', shutdown);

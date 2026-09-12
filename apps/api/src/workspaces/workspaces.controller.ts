@@ -23,6 +23,9 @@ export class WorkspacesController {
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateWorkspaceDto) { return this.workspaces.create(user, dto.name); }
 
+  @Get(':workspaceId/overview')
+  overview(@CurrentUser() user: AuthUser, @Param('workspaceId') workspaceId: string) { return this.workspaces.overview(user, workspaceId); }
+
   @Get(':workspaceId/members')
   listMembers(@CurrentUser() user: AuthUser, @Param('workspaceId') workspaceId: string) { return this.workspaces.listMembers(user, workspaceId); }
 

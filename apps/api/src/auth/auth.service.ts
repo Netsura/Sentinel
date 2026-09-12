@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { WorkspaceRole } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -21,6 +22,9 @@ export class AuthService {
     const user = await this.prisma.user.create({
       data: { email, passwordHash: await argon2.hash(dto.password) },
       select: { id: true, email: true },
+    });
+    await this.prisma.workspace.create({
+      data: { name: 'Personal workspace', members: { create: { userId: user.id, role: WorkspaceRole.OWNER } } },
     });
     await this.createEmailVerificationToken(user.id);
     const tokens = await this.issueTokens(user);
