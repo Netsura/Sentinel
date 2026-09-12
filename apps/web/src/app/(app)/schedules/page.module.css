@@ -1,0 +1,31 @@
+.addPanel { background: var(--panel); border: 1px solid var(--line); padding: 19px 21px; display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+.addPanel label { display: grid; gap: 7px; color: #53615d; font-size: 11px; font-weight: 700; flex: 1; min-width: 160px; }
+.addPanel select { border: 1px solid #d8dfd9; background: #fff; padding: 11px; color: var(--ink); width: 100%; outline-color: var(--teal); }
+.addPanel button { border: 0; background: var(--coral); color: #fff; padding: 12px 19px; font-size: 12px; font-weight: 700; }
+.addPanel button:disabled { opacity: .55; }
+
+.error { color: #a34f3c; background: #fbeee9; border: 1px solid #f0d6cc; padding: 12px 15px; font-size: 12px; margin: 14px 0 0; }
+.lockNotice { color: #a17c2f; background: #fbf1d9; border: 1px solid #f0e2c2; padding: 11px 14px; font-size: 11px; margin: 14px 0 0; }
+.lockNotice a, .empty a { color: var(--teal); font-weight: 700; }
+.empty { color: #8a9691; font-size: 12px; padding: 40px 21px; text-align: center; margin: 0; }
+
+.list { margin-top: 14px; background: var(--panel); border: 1px solid var(--line); }
+.row { display: flex; align-items: center; gap: 20px; padding: 19px 21px; border-bottom: 1px solid #eef0ee; flex-wrap: wrap; }
+.row:last-child { border-bottom: 0; }
+.row > div:first-child { flex: 1; min-width: 170px; }
+.row strong { display: block; font-size: 13px; }
+.row small { display: block; color: #87938e; font-size: 10px; margin-top: 5px; font-family: 'DM Mono', monospace; }
+.row time { color: #899590; font-family: 'DM Mono', monospace; font-size: 10px; }
+
+.state { padding: 5px 9px; font-family: 'DM Mono', monospace; font-size: 8px; letter-spacing: .06em; }
+.state.enabled { color: #3e806b; background: #e4f1e9; }
+.state.paused { color: #5e6d77; background: #e8edf1; }
+
+.actions { display: flex; gap: 8px; }
+.actions button { border: 1px solid #d8dfd9; background: #fff; color: var(--teal); padding: 9px 13px; font-size: 11px; font-weight: 700; }
+.actions button:hover { border-color: #bfcac3; }
+.actions .danger { color: #a34f3c; }
+
+@media (max-width: 650px) {
+  .row { align-items: flex-start; }
+}

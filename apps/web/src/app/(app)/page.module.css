@@ -1,0 +1,94 @@
+.eyebrow { color: #8a9691; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .12em; margin: 0; }
+.primaryButton { border: 0; background: var(--coral); color: #fff; padding: 12px 17px; font-size: 12px; font-weight: 700; text-decoration: none; display: inline-block; }
+.error { color: #a34f3c; background: #fbeee9; border: 1px solid #f0d6cc; padding: 13px 15px; font-size: 12px; }
+.empty { color: #8a9691; font-size: 12px; padding: 26px 0; text-align: center; margin: 0; }
+
+.statusBar { background: #e7f1eb; border: 1px solid #d4e5da; color: #54816b; padding: 10px 15px; font-size: 11px; margin-bottom: 19px; }
+.liveDot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #53bd91; margin-right: 8px; }
+.statusDivider { display: inline-block; height: 12px; border-left: 1px solid #bdd4c5; margin: 0 15px -2px; }
+.statusLink { color: #2d8f87; font-weight: 700; margin-left: 10px; }
+
+.scoreGrid { display: grid; grid-template-columns: 1.55fr repeat(3, 1fr); gap: 12px; }
+.panel { background: var(--panel); border: 1px solid var(--line); }
+.scorePanel, .metric { min-height: 154px; padding: 20px 21px; }
+.metric { display: block; text-decoration: none; color: inherit; }
+.metric:hover { border-color: #cdd6cd; }
+.panelHeading { display: flex; justify-content: space-between; align-items: flex-start; }
+.panelHeading > span, .panelHeading > div > span { color: #8a9691; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .12em; }
+.panelHeading p { color: #9aa49f; font-size: 10px; margin: 5px 0 0; }
+
+.scoreRow { display: flex; align-items: baseline; gap: 17px; margin-top: 17px; }
+.score { font-size: 48px; line-height: 1; font-weight: 700; letter-spacing: -.08em; }
+.score span { font-size: 15px; color: #9ca7a2; font-weight: 500; letter-spacing: -.04em; }
+.scoreDelta { color: #3d9b70; font-family: 'DM Mono', monospace; font-size: 11px; }
+.scoreDelta.negative { color: #c2593f; }
+.scoreDelta small, .metric small { color: #84908b; display: block; font-family: Manrope, sans-serif; font-size: 10px; margin-top: 4px; }
+.scoreBar { height: 5px; background: #edf0ed; margin-top: 17px; }
+.scoreBar span { display: block; height: 100%; background: var(--coral); transition: width .3s ease; }
+.scoreBar span.good { background: #4fa87f; }
+.scoreBar span.warn { background: #e8b85b; }
+.scoreBar span.bad { background: #d9584c; }
+.scoreBar span.unknown { background: #c8d0cb; }
+.scoreFooter { display: flex; justify-content: space-between; color: #687772; font-size: 10px; margin-top: 8px; }
+.metric strong { display: block; font-size: 37px; letter-spacing: -.07em; margin-top: 24px; }
+.metricDot { height: 7px; width: 7px; border-radius: 50%; }
+.teal { background: #54b69a; }
+.coral { background: var(--coral); }
+.yellow { background: #e8b85b; }
+
+.mainGrid { display: grid; grid-template-columns: 1.7fr 1fr; gap: 12px; margin-top: 12px; }
+.chartPanel, .breakdown { min-height: 315px; padding: 21px; display: flex; flex-direction: column; }
+.chart { display: flex; margin-top: 28px; height: 190px; }
+.chartLabels { display: flex; flex-direction: column; justify-content: space-between; color: #a5afaa; font-family: 'DM Mono', monospace; font-size: 9px; padding-right: 12px; }
+.chartArea { position: relative; flex: 1; }
+.gridLines { position: absolute; inset: 0; background: repeating-linear-gradient(to bottom, transparent 0, transparent 46px, #edf0ed 47px); }
+.chartArea svg { width: 100%; height: 100%; position: relative; }
+.chartDates { margin: 10px 0 0 30px; display: flex; justify-content: space-between; color: #a5afaa; font-family: 'DM Mono', monospace; font-size: 9px; }
+
+.donutWrap { display: flex; align-items: center; gap: 28px; margin: 31px 0 25px; }
+.donut { width: 132px; height: 132px; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; }
+.donut > div { width: 93px; height: 93px; background: white; border-radius: 50%; display: grid; place-content: center; text-align: center; }
+.donut strong { font-size: 27px; letter-spacing: -.08em; }
+.donut small { color: #8d9994; font-size: 10px; }
+.legend { display: grid; gap: 11px; width: 100%; }
+.legendItem { display: grid; grid-template-columns: 9px 1fr auto; gap: 8px; align-items: center; color: #75817c; font-size: 11px; }
+.legendItem strong { color: var(--ink); font-size: 12px; }
+.legendDot { width: 7px; height: 7px; border-radius: 50%; }
+.textButton { border: 0; background: transparent; padding: 0; color: var(--teal); font-size: 11px; font-weight: 700; text-decoration: none; margin-top: auto; text-align: left; }
+
+.findingsSection { margin-top: 34px; }
+.sectionHeading { display: flex; justify-content: space-between; align-items: end; margin-bottom: 14px; }
+.sectionHeading h2 { font-size: 19px; letter-spacing: -.05em; margin: 6px 0 0; }
+.findingsTable { padding: 0 21px; }
+.findingRow { min-height: 69px; display: flex; align-items: center; border-bottom: 1px solid #eef0ee; gap: 18px; }
+.findingRow:last-child { border-bottom: 0; }
+.severity { width: 61px; flex-shrink: 0; padding: 5px 0; text-align: center; font-family: 'DM Mono', monospace; font-size: 8px; letter-spacing: .06em; }
+.severity.critical { color: #96332a; background: #fadfdc; }
+.severity.high { color: #a65b39; background: #fae9df; }
+.severity.medium { color: #a17c2f; background: #fbf1d9; }
+.severity.low { color: #3e806b; background: #e4f1e9; }
+.severity.info { color: #5e6d77; background: #e8edf1; }
+.findingName { flex: 1; min-width: 0; }
+.findingName strong { display: block; font-size: 12px; font-weight: 700; }
+.findingName small { display: block; color: #87938e; font-size: 10px; margin-top: 4px; }
+.findingAge { color: #899590; font-family: 'DM Mono', monospace; font-size: 10px; }
+
+@media (max-width: 950px) {
+  .scoreGrid { grid-template-columns: repeat(2, 1fr); }
+  .scorePanel { grid-column: span 2; }
+  .mainGrid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+  .scoreGrid { grid-template-columns: 1fr 1fr; }
+  .scorePanel { grid-column: span 2; }
+  .metric { min-height: 130px; padding: 16px; }
+  .metric strong { margin-top: 19px; }
+  .statusDivider { margin: 0 7px -2px; }
+  .statusBar { line-height: 2; }
+  .donutWrap { gap: 17px; }
+  .donut { width: 105px; height: 105px; }
+  .donut > div { width: 75px; height: 75px; }
+  .findingRow { gap: 10px; }
+  .findingAge { display: none; }
+}
