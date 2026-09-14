@@ -7,6 +7,7 @@ const WORKSPACE_KEY = 'sentinel.workspaceId';
 const WORKSPACE_NAME_KEY = 'sentinel.workspaceName';
 
 const PUBLIC_AUTH_PATHS = ['/login', '/register', '/forgot-password', '/reset-password', '/verify-email'];
+const CSRF_KEY = 'sentinel.csrfToken';
 
 export type AuthUser = { id: string; email: string };
 export type TokenPair = { accessToken: string; refreshToken: string };
@@ -70,6 +71,18 @@ export function clearSession() {
   sessionStorage.removeItem(WORKSPACE_NAME_KEY);
 }
 
+export async function ensureCsrfToken(force = false) {
+  if (!isBrowser()) return null;
+  const cached = sessionStorage.getItem(CSRF_KEY);
+  if (cached && !force) return cached;
+  const response = await fetch(`${apiBaseUrl}/auth/csrf`, { credentials: 'include' });
+  if (!response.ok) return null;
+  const body = (await response.json()) as { csrfToken?: string };
+  if (!body.csrfToken) return null;
+  sessionStorage.setItem(CSRF_KEY, body.csrfToken);
+  return body.csrfToken;
+}
+
 function isPublicAuthRoute(pathname = window.location.pathname) {
   return PUBLIC_AUTH_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
@@ -89,9 +102,11 @@ export async function refreshSession() {
   refreshInFlight = (async () => {
     const refreshToken = getRefreshToken();
     if (!refreshToken) return false;
+    const csrfToken = await ensureCsrfToken();
     const response = await fetch(`${apiBaseUrl}/auth/refresh`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}) },
       body: JSON.stringify({ refreshToken }),
     });
     if (!response.ok) {
@@ -125,7 +140,18 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}, retrie
   const workspaceId = getWorkspaceId();
   if (workspaceId && !headers.has('x-workspace-id')) headers.set('x-workspace-id', workspaceId);
 
-  const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers });
+  const method = (init.method ?? 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && !headers.has('x-csrf-token')) {
+    const csrfToken = await ensureCsrfToken();
+    if (csrfToken) headers.set('x-csrf-token', csrfToken);
+  }
+
+  const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers, credentials: 'include' });
+
+  if (response.status === 403 && isBrowser() && !retried && method !== 'GET') {
+    await ensureCsrfToken(true);
+    return apiRequest<T>(path, init, true);
+  }
 
   if (response.status === 401 && isBrowser() && shouldAttemptRefresh(path) && !retried) {
     const refreshed = await refreshSession();

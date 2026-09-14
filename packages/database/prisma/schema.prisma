@@ -70,6 +70,15 @@ enum NotificationType {
   FINDING_RESOLVED
 }
 
+enum BillingStatus {
+  NONE
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+}
+
 model User {
   id           String            @id @default(cuid())
   email        String            @unique
@@ -125,18 +134,23 @@ model EmailVerificationToken {
 }
 
 model Workspace {
-  id        String            @id @default(cuid())
-  name      String
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
-  members   WorkspaceMember[]
-  assets    Asset[]
-  scans     Scan[]
-  findings  Finding[]
-  auditLogs AuditLog[]
-  reports   Report[]
-  scheduledScans ScheduledScan[]
-  notifications Notification[]
+  id                   String            @id @default(cuid())
+  name                 String
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  stripeCustomerId     String?           @unique
+  stripeSubscriptionId String?           @unique
+  billingStatus        BillingStatus     @default(NONE)
+  billingPlan          String?
+  currentPeriodEnd     DateTime?
+  members              WorkspaceMember[]
+  assets               Asset[]
+  scans                Scan[]
+  findings             Finding[]
+  auditLogs            AuditLog[]
+  reports              Report[]
+  scheduledScans       ScheduledScan[]
+  notifications        Notification[]
 }
 
 model WorkspaceMember {
@@ -171,26 +185,29 @@ model Asset {
 }
 
 model Scan {
-  id          String     @id @default(cuid())
+  id          String         @id @default(cuid())
   workspaceId String
   assetId     String
   startedById String
+  scheduleId  String?
   mode        ScanMode
-  status      ScanStatus @default(QUEUED)
-  stage       String     @default("QUEUED")
-  progress    Int        @default(0)
+  status      ScanStatus     @default(QUEUED)
+  stage       String         @default("QUEUED")
+  progress    Int            @default(0)
   score       Int?
-  queuedAt    DateTime   @default(now())
+  queuedAt    DateTime       @default(now())
   startedAt   DateTime?
   completedAt DateTime?
-  createdAt   DateTime   @default(now())
-  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  asset       Asset      @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  startedBy   User       @relation(fields: [startedById], references: [id])
+  createdAt   DateTime       @default(now())
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  asset       Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  startedBy   User           @relation(fields: [startedById], references: [id])
+  schedule    ScheduledScan? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
   findings    Finding[]
   reports     Report[]
   @@index([workspaceId, createdAt])
   @@index([assetId, createdAt])
+  @@index([scheduleId, createdAt])
 }
 
 model Finding {
@@ -262,7 +279,17 @@ model ScheduledScan {
   workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   asset       Asset            @relation(fields: [assetId], references: [id], onDelete: Cascade)
   createdBy   User             @relation(fields: [createdById], references: [id])
+  scans       Scan[]
   @@index([workspaceId, enabled, nextRunAt])
+}
+
+model StripeEvent {
+  id          String   @id
+  type        String
+  livemode    Boolean  @default(false)
+  processedAt DateTime @default(now())
+  payload     Json
+  @@index([type, processedAt])
 }
 
 model Notification {

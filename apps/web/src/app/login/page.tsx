@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { FormEvent, Suspense, useState } from 'react';
-import { login, safeNextPath } from '../../lib/api';
+import { FormEvent, Suspense, useEffect, useState } from 'react';
+import { ensureCsrfToken, login, safeNextPath } from '../../lib/api';
 import styles from './page.module.css';
 
 function LoginForm() {
@@ -13,6 +13,10 @@ function LoginForm() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    void ensureCsrfToken();
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -49,6 +53,8 @@ function LoginForm() {
         </form>
         <p className={styles.footnote}>
           Need an account? <Link href="/register">Create one</Link>
+          <br />
+          <Link href="/forgot-password">Forgot password?</Link>
         </p>
       </section>
     </main>

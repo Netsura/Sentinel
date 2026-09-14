@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   apiRequest,
   clearSession,
+  ensureCsrfToken,
   fetchCurrentUser,
   getAccessToken,
   getRefreshToken,
@@ -42,6 +43,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [workspace, setWorkspaceState] = useState<Workspace | null>(null);
 
   const boot = useCallback(async () => {
+    await ensureCsrfToken();
     if (!getAccessToken()) {
       const restored = getRefreshToken() ? await refreshSession() : false;
       if (!restored) {

@@ -15,9 +15,11 @@ import { SchedulesModule } from '../schedules/schedules.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MetricsModule } from '../metrics/metrics.module';
 import { MetricsInterceptor } from '../metrics/metrics.interceptor';
+import { MailModule } from '../mail/mail.module';
+import { BillingModule } from '../billing/billing.module';
 
 @Module({
-  imports: [ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]), PrismaModule, MetricsModule, AuthModule, WorkspacesModule, AssetsModule, ScansModule, FindingsModule, RealtimeModule, ReportsModule, SchedulesModule, NotificationsModule],
+  imports: [ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]), PrismaModule, MailModule, MetricsModule, AuthModule, WorkspacesModule, AssetsModule, ScansModule, FindingsModule, RealtimeModule, ReportsModule, SchedulesModule, NotificationsModule, BillingModule],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }, { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor }],
 })

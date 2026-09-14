@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { FindingStatus, WorkspaceRole } from '@prisma/client';
 import { AuthUser } from '../auth/auth.service';
+import { withAudit } from '../common/audit';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { FindingQueryDto, UpdateFindingDto } from './findings.dto';
@@ -36,8 +37,8 @@ export class FindingsService {
     await this.workspaces.requireMembership(user, workspaceId, WorkspaceRole.ANALYST);
     const existing = await this.prisma.finding.findFirst({ where: { id: findingId, workspaceId } });
     if (!existing) throw new NotFoundException('Finding not found');
-    const updated = await this.prisma.finding.update({ where: { id: findingId }, data: { status: dto.status, resolvedAt: dto.status === FindingStatus.RESOLVED ? new Date() : null } });
-    await this.prisma.auditLog.create({ data: { workspaceId, userId: user.id, action: 'FINDING_STATUS_CHANGED', resource: 'Finding', resourceId: findingId, metadata: { from: existing.status, to: dto.status } } });
-    return updated;
+    return withAudit(this.prisma, { workspaceId, userId: user.id, action: 'FINDING_STATUS_CHANGED', resource: 'Finding', resourceId: findingId, metadata: { from: existing.status, to: dto.status } }, (tx) =>
+      tx.finding.update({ where: { id: findingId }, data: { status: dto.status, resolvedAt: dto.status === FindingStatus.RESOLVED ? new Date() : null } }),
+    );
   }
 }
