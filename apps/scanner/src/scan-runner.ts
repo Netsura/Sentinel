@@ -28,6 +28,9 @@ export class ScanRunner {
     const scan = await this.prisma.scan.findUnique({ where: { id: scanId }, include: { asset: true } });
     if (!scan || scan.assetId !== assetId) throw new Error('Scan target no longer exists');
     if (scan.status === ScanStatus.CANCELLED) throw new ScanCancelledError();
+    if (scan.status === ScanStatus.COMPLETED || scan.status === ScanStatus.FAILED) {
+      return { score: scan.score ?? 0, findings: 0, requests: 0, skipped: true };
+    }
 
     const mode = scan.mode;
     const profile = SCAN_PROFILES[mode];
@@ -94,7 +97,7 @@ export class ScanRunner {
     await this.persist(scan.workspaceId, scan.assetId, scanId, deduped);
     await this.complete(scanId, score, deduped, client.used);
 
-    return { score, findings: deduped.length, requests: client.used };
+    return { score, findings: deduped.length, requests: client.used, skipped: false };
   }
 
   private async begin(scanId: string) {
@@ -124,16 +127,24 @@ export class ScanRunner {
   }
 
   private async persist(workspaceId: string, assetId: string, scanId: string, findings: FindingInput[]) {
-    if (!findings.length) return;
-    await this.prisma.finding.createMany({
-      data: findings.map((finding) => ({ ...finding, scanId, workspaceId, assetId })),
+    await this.prisma.$transaction(async (tx) => {
+      await tx.finding.deleteMany({ where: { scanId } });
+      if (!findings.length) return;
+      await tx.finding.createMany({
+        data: findings.map((finding) => ({ ...finding, scanId, workspaceId, assetId })),
+      });
     });
   }
 
   private async complete(scanId: string, score: number, findings: FindingInput[], requests: number) {
-    const scan = await this.prisma.scan.update({
-      where: { id: scanId },
+    const claimed = await this.prisma.scan.updateMany({
+      where: { id: scanId, status: { notIn: [ScanStatus.COMPLETED, ScanStatus.CANCELLED, ScanStatus.FAILED] } },
       data: { status: ScanStatus.COMPLETED, stage: 'COMPLETED', progress: 100, score, completedAt: new Date() },
+    });
+    if (claimed.count === 0) return;
+
+    const scan = await this.prisma.scan.findUniqueOrThrow({
+      where: { id: scanId },
       include: { asset: { select: { id: true, value: true, securityScore: true } } },
     });
 

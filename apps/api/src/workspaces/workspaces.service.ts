@@ -2,6 +2,7 @@ import { ConflictException, ForbiddenException, Injectable, NotFoundException } 
 import { FindingStatus, ScanStatus, Severity, VerificationStatus, WorkspaceRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.service';
+import { withAudit } from '../common/audit';
 import { AddMemberDto, UpdateMemberRoleDto } from './members.dto';
 
 const TREND_WINDOW_DAYS = 30;
@@ -15,7 +16,11 @@ export class WorkspacesService {
   }
 
   async create(user: AuthUser, name: string) {
-    return this.prisma.workspace.create({ data: { name: name.trim(), members: { create: { userId: user.id, role: WorkspaceRole.OWNER } } } });
+    return this.prisma.$transaction(async (tx) => {
+      const workspace = await tx.workspace.create({ data: { name: name.trim(), members: { create: { userId: user.id, role: WorkspaceRole.OWNER } } } });
+      await tx.auditLog.create({ data: { workspaceId: workspace.id, userId: user.id, action: 'WORKSPACE_CREATED', resource: 'Workspace', resourceId: workspace.id } });
+      return workspace;
+    });
   }
 
   /** Single round trip for the dashboard so it does not have to stitch five list endpoints together. */
@@ -90,9 +95,9 @@ export class WorkspacesService {
     if (!member) throw new NotFoundException('User must register before being added to a workspace');
     const existing = await this.prisma.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId, userId: member.id } } });
     if (existing) throw new ConflictException('User is already a workspace member');
-    const created = await this.prisma.workspaceMember.create({ data: { workspaceId, userId: member.id, role: dto.role ?? WorkspaceRole.VIEWER } });
-    await this.prisma.auditLog.create({ data: { workspaceId, userId: user.id, action: 'MEMBER_ADDED', resource: 'WorkspaceMember', resourceId: created.id, metadata: { memberId: member.id, role: created.role } } });
-    return created;
+    return withAudit(this.prisma, { workspaceId, userId: user.id, action: 'MEMBER_ADDED', resource: 'WorkspaceMember', metadata: { memberId: member.id, role: dto.role ?? WorkspaceRole.VIEWER } }, (tx) =>
+      tx.workspaceMember.create({ data: { workspaceId, userId: member.id, role: dto.role ?? WorkspaceRole.VIEWER } }),
+    );
   }
 
   async updateMember(user: AuthUser, workspaceId: string, memberId: string, dto: UpdateMemberRoleDto) {
@@ -100,7 +105,9 @@ export class WorkspacesService {
     const member = await this.prisma.workspaceMember.findFirst({ where: { id: memberId, workspaceId } });
     if (!member) throw new NotFoundException('Workspace member not found');
     if (member.role === WorkspaceRole.OWNER && dto.role !== WorkspaceRole.OWNER && await this.ownerCount(workspaceId) === 1) throw new ForbiddenException('A workspace must retain an owner');
-    return this.prisma.workspaceMember.update({ where: { id: memberId }, data: { role: dto.role } });
+    return withAudit(this.prisma, { workspaceId, userId: user.id, action: 'MEMBER_ROLE_CHANGED', resource: 'WorkspaceMember', resourceId: memberId, metadata: { from: member.role, to: dto.role } }, (tx) =>
+      tx.workspaceMember.update({ where: { id: memberId }, data: { role: dto.role } }),
+    );
   }
 
   async removeMember(user: AuthUser, workspaceId: string, memberId: string) {
@@ -108,8 +115,9 @@ export class WorkspacesService {
     const member = await this.prisma.workspaceMember.findFirst({ where: { id: memberId, workspaceId } });
     if (!member) throw new NotFoundException('Workspace member not found');
     if (member.role === WorkspaceRole.OWNER && await this.ownerCount(workspaceId) === 1) throw new ForbiddenException('A workspace must retain an owner');
-    await this.prisma.workspaceMember.delete({ where: { id: memberId } });
-    await this.prisma.auditLog.create({ data: { workspaceId, userId: user.id, action: 'MEMBER_REMOVED', resource: 'WorkspaceMember', resourceId: memberId } });
+    await withAudit(this.prisma, { workspaceId, userId: user.id, action: 'MEMBER_REMOVED', resource: 'WorkspaceMember', resourceId: memberId }, (tx) =>
+      tx.workspaceMember.delete({ where: { id: memberId } }),
+    );
     return { success: true };
   }
 

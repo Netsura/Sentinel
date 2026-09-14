@@ -2,8 +2,8 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { FormEvent, Suspense, useState } from 'react';
-import { register, safeNextPath } from '../../lib/api';
+import { FormEvent, Suspense, useEffect, useState } from 'react';
+import { ensureCsrfToken, register, safeNextPath } from '../../lib/api';
 import styles from '../login/page.module.css';
 
 function RegisterForm() {
@@ -14,6 +14,10 @@ function RegisterForm() {
   const [confirmation, setConfirmation] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    void ensureCsrfToken();
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { WorkspaceRole } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'node:crypto';
+import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ForgotPasswordDto, LoginDto, RegisterDto, ResetPasswordDto, VerifyEmailDto } from './auth.dto';
 
@@ -12,21 +13,35 @@ type TokenPair = { accessToken: string; refreshToken: string };
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService, private readonly jwt: JwtService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwt: JwtService,
+    private readonly mail: MailService,
+  ) {}
 
   async register(dto: RegisterDto): Promise<TokenPair & { user: AuthUser }> {
     const email = dto.email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) throw new ConflictException('Email is already registered');
 
-    const user = await this.prisma.user.create({
-      data: { email, passwordHash: await argon2.hash(dto.password) },
-      select: { id: true, email: true },
+    const passwordHash = await argon2.hash(dto.password);
+    const verificationToken = randomBytes(32).toString('base64url');
+
+    const user = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({ data: { email, passwordHash }, select: { id: true, email: true } });
+      const workspace = await tx.workspace.create({
+        data: { name: 'Personal workspace', members: { create: { userId: created.id, role: WorkspaceRole.OWNER } } },
+      });
+      await tx.emailVerificationToken.create({
+        data: { userId: created.id, tokenHash: this.hashToken(verificationToken), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) },
+      });
+      await tx.auditLog.create({
+        data: { workspaceId: workspace.id, userId: created.id, action: 'WORKSPACE_CREATED', resource: 'Workspace', resourceId: workspace.id },
+      });
+      return created;
     });
-    await this.prisma.workspace.create({
-      data: { name: 'Personal workspace', members: { create: { userId: user.id, role: WorkspaceRole.OWNER } } },
-    });
-    await this.createEmailVerificationToken(user.id);
+
+    await this.mail.sendVerification(user.email, verificationToken);
     const tokens = await this.issueTokens(user);
     return { ...tokens, user };
   }
@@ -61,6 +76,7 @@ export class AuthService {
     if (user) {
       const token = randomBytes(32).toString('base64url');
       await this.prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash: this.hashToken(token), expiresAt: new Date(Date.now() + 30 * 60 * 1000) } });
+      await this.mail.sendPasswordReset(user.email, token);
     }
     return { message: 'If that email is registered, reset instructions will be sent.' };
   }
@@ -104,10 +120,5 @@ export class AuthService {
 
   private hashToken(token: string) {
     return createHash('sha256').update(token).digest('hex');
-  }
-
-  private async createEmailVerificationToken(userId: string) {
-    const token = randomBytes(32).toString('base64url');
-    return this.prisma.emailVerificationToken.create({ data: { userId, tokenHash: this.hashToken(token), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) } });
   }
 }

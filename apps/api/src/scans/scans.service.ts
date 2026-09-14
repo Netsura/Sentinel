@@ -1,16 +1,21 @@
-import { BadRequestException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, OnModuleDestroy, ServiceUnavailableException } from '@nestjs/common';
 import { AssetType, ScanMode, ScanStatus, VerificationStatus, WorkspaceRole } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { AuthUser } from '../auth/auth.service';
+import { withAudit } from '../common/audit';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { CreateScanDto } from './scans.dto';
 
 @Injectable()
-export class ScansService {
+export class ScansService implements OnModuleDestroy {
   private readonly queue = new Queue('scan', { connection: { url: process.env.REDIS_URL ?? 'redis://localhost:6379' } as never });
 
   constructor(private readonly prisma: PrismaService, private readonly workspaces: WorkspacesService) {}
+
+  async onModuleDestroy() {
+    await this.queue.close();
+  }
 
   async list(user: AuthUser, workspaceId: string) {
     await this.workspaces.requireMembership(user, workspaceId);
@@ -31,7 +36,9 @@ export class ScansService {
     if (dto.mode !== ScanMode.SAFE && asset.verificationStatus !== VerificationStatus.VERIFIED) throw new BadRequestException('Active scans require a verified asset');
     if (asset.type === AssetType.IP && dto.mode === ScanMode.AGGRESSIVE) throw new BadRequestException('Aggressive IP scanning requires an explicit authorization workflow');
 
-    const scan = await this.prisma.scan.create({ data: { workspaceId, assetId: asset.id, startedById: user.id, mode: dto.mode } });
+    const scan = await withAudit(this.prisma, { workspaceId, userId: user.id, action: 'SCAN_STARTED', resource: 'Scan', metadata: { assetId: asset.id, mode: dto.mode } }, (tx) =>
+      tx.scan.create({ data: { workspaceId, assetId: asset.id, startedById: user.id, mode: dto.mode } }),
+    );
     try {
       await this.queue.add('scan', { scanId: scan.id, workspaceId, assetId: asset.id, mode: dto.mode }, { jobId: scan.id, attempts: 3, backoff: { type: 'exponential', delay: 1000 }, removeOnComplete: 100, removeOnFail: 500 });
     } catch {
@@ -48,7 +55,9 @@ export class ScansService {
     if (scan.status === ScanStatus.COMPLETED || scan.status === ScanStatus.FAILED || scan.status === ScanStatus.CANCELLED) return scan;
     const job = await this.queue.getJob(scan.id);
     await job?.remove();
-    return this.prisma.scan.update({ where: { id: scan.id }, data: { status: ScanStatus.CANCELLED, stage: 'CANCELLED', completedAt: new Date() } });
+    return withAudit(this.prisma, { workspaceId, userId: user.id, action: 'SCAN_CANCELLED', resource: 'Scan', resourceId: scan.id }, (tx) =>
+      tx.scan.update({ where: { id: scan.id }, data: { status: ScanStatus.CANCELLED, stage: 'CANCELLED', completedAt: new Date() } }),
+    );
   }
 
   async diff(user: AuthUser, workspaceId: string, previousScanId: string, currentScanId: string) {

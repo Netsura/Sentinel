@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ReportFormat, ScanStatus, WorkspaceRole } from '@prisma/client';
 import { AuthUser } from '../auth/auth.service';
+import { withAudit } from '../common/audit';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { CreateReportDto } from './reports.dto';
@@ -27,9 +28,9 @@ export class ReportsService {
       scan: { id: scan.id, mode: scan.mode, completedAt: scan.completedAt },
       findings: scan.findings,
     };
-    const report = await this.prisma.report.create({ data: { workspaceId, scanId: scan.id, createdById: user.id, format: dto.format, content } });
-    await this.prisma.auditLog.create({ data: { workspaceId, userId: user.id, action: 'REPORT_GENERATED', resource: 'Report', resourceId: report.id, metadata: { scanId: scan.id, format: dto.format } } });
-    return report;
+    return withAudit(this.prisma, { workspaceId, userId: user.id, action: 'REPORT_GENERATED', resource: 'Report', metadata: { scanId: scan.id, format: dto.format } }, (tx) =>
+      tx.report.create({ data: { workspaceId, scanId: scan.id, createdById: user.id, format: dto.format, content } }),
+    );
   }
 
   async get(user: AuthUser, workspaceId: string, reportId: string) {

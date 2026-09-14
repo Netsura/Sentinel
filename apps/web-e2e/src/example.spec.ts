@@ -20,3 +20,10 @@ test('offers registration from the sign-in route', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
   await expect(page).toHaveURL(/\/register/);
 });
+
+test('offers password reset from the sign-in route', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByRole('link', { name: 'Forgot password?' }).click();
+  await expect(page.getByRole('heading', { name: 'Reset password' })).toBeVisible();
+  await expect(page).toHaveURL(/\/forgot-password/);
+});

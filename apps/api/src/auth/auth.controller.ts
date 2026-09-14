@@ -1,12 +1,19 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, Res, UseGuards } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { AuthService, AuthUser } from './auth.service';
 import { ForgotPasswordDto, LoginDto, RefreshDto, RegisterDto, ResetPasswordDto, VerifyEmailDto } from './auth.dto';
 import { JwtAuthGuard } from './auth.guard';
 import { CurrentUser } from './current-user.decorator';
+import { issueCsrfToken } from './csrf';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
+
+  @Get('csrf')
+  csrf(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    return { csrfToken: issueCsrfToken(req, res) };
+  }
 
   @Post('register')
   register(@Body() dto: RegisterDto) {
