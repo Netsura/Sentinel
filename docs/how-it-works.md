@@ -164,11 +164,12 @@ Nx writes Next.js output to `apps/web/.next`, not `dist/apps/web`.
 - Env (required): `DATABASE_URL` (Neon unpooled URL), `REDIS_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `WEB_ORIGIN=https://<web-service>.onrender.com`
 - Do not set `API_PORT`; Render injects `PORT`
 
-**Scanner (Background Worker)**
+**Scanner (Web Service)**
 
 - Build: `npm ci --include=dev && npx prisma generate --schema=packages/database/prisma/schema.prisma && NX_DAEMON=false npx nx build scanner --configuration=production`
 - Start: `node dist/apps/scanner/main.js`
 - Env: same `DATABASE_URL` and `REDIS_URL` as the API
+- Leave **Port** empty; the process binds `0.0.0.0:$PORT` for health before connecting to Redis
 
 ## 8. Verification commands
 
