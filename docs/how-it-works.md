@@ -145,6 +145,31 @@ SMTP (`SMTP_URL`) and Stripe keys are optional. Leave them empty until you want 
 
 On a VPS, point DNS at the host, set `WEB_ORIGIN` to `https://your-domain`, put TLS in front of Nginx (Caddy, Traefik, or a host reverse proxy), and keep `.env.production` off the repository.
 
+## 7b. Render
+
+Use **Node 22**, repo root, and `npm ci --include=dev` so Nx/Prisma stay available during the build. Do not set `NODE_ENV` in the dashboard; Render sets it at runtime. Setting it as an env var makes `npm ci` skip `devDependencies` and the scanner build fails with "Could not find Nx modules".
+
+**Web**
+
+- Build: `npm ci --include=dev && NX_DAEMON=false npx nx build web --configuration=production`
+- Start: `npx next start apps/web --hostname 0.0.0.0 --port $PORT`
+- Env: `NEXT_PUBLIC_API_URL=https://<api-service>.onrender.com/api` (must be present at **build** time)
+
+Nx writes Next.js output to `apps/web/.next`, not `dist/apps/web`.
+
+**API**
+
+- Build: `npm ci --include=dev && npx prisma generate --schema=packages/database/prisma/schema.prisma && NX_DAEMON=false npx nx build api --configuration=production`
+- Start: `npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma && node dist/apps/api/main.js`
+- Env (required): `DATABASE_URL` (Neon unpooled URL), `REDIS_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `WEB_ORIGIN=https://<web-service>.onrender.com`
+- Do not set `API_PORT`; Render injects `PORT`
+
+**Scanner (Background Worker)**
+
+- Build: `npm ci --include=dev && npx prisma generate --schema=packages/database/prisma/schema.prisma && NX_DAEMON=false npx nx build scanner --configuration=production`
+- Start: `node dist/apps/scanner/main.js`
+- Env: same `DATABASE_URL` and `REDIS_URL` as the API
+
 ## 8. Verification commands
 
 ```sh
