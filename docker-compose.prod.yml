@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
     environment:
       NODE_ENV: production
     depends_on: [api]
@@ -62,12 +64,18 @@ services:
     volumes: [sentinel-prod-postgres:/var/lib/postgresql/data]
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-sentinel} -d ${POSTGRES_DB:-sentinel}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes
     volumes: [sentinel-prod-redis:/data]
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
 volumes:
   sentinel-prod-postgres:
   sentinel-prod-redis:

@@ -29,7 +29,7 @@ async function bootstrap() {
     allowedHeaders: ['Authorization', 'Content-Type', 'x-workspace-id', 'x-csrf-token'],
   });
   const port = process.env.API_PORT || process.env.PORT || 3001;
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
   Logger.log(`Sentinel API is running on: http://localhost:${port}/${globalPrefix}`);
 }
 

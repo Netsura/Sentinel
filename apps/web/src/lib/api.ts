@@ -374,5 +374,8 @@ export async function downloadReport(summary: ReportSummary) {
 }
 
 export function websocketBaseUrl() {
+  if (apiBaseUrl.startsWith('/')) {
+    return isBrowser() ? window.location.origin : '';
+  }
   return apiBaseUrl.replace(/\/api\/?$/, '');
 }
