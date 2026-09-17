@@ -91,13 +91,14 @@ The scanner worker then:
 
 1. Resolves DNS and rejects private or metadata addresses.
 2. Resolves again immediately before the request and rejects address-set changes.
-3. Performs TLS certificate inspection.
-4. Performs safe HTTPS and header checks.
-5. Persists deterministic findings.
-6. Calculates a deterministic score.
-7. Updates scan stage/progress.
-8. Publishes progress through Redis for WebSocket subscribers.
-9. Creates an in-app completion notification.
+3. Performs TLS certificate, protocol, and cipher inspection (legacy TLS on active modes).
+4. Performs HTTPS and header checks.
+5. On NORMAL/AGGRESSIVE, crawls in-scope pages and probes discovered endpoints.
+6. Persists deterministic findings (replacing any previous rows for that scan).
+7. Calculates a deterministic score.
+8. Updates scan stage/progress.
+9. Publishes progress through Redis for WebSocket subscribers.
+10. Creates in-app completion, critical-finding, and score-drop notifications.
 
 Workers never receive arbitrary URLs from the browser. They receive an asset ID and load the authorized target from PostgreSQL.
 
@@ -113,15 +114,36 @@ Workers never receive arbitrary URLs from the browser. They receive an asset ID 
 
 ## 7. Production startup
 
-Production uses `docker-compose.prod.yml`:
+Production uses `docker-compose.prod.yml` and `.env.production`.
 
 ```sh
-cp .env.example .env
-# Set strong database and JWT secrets in .env
-docker compose -f docker-compose.prod.yml up -d --build
+cp .env.production.example .env.production
 ```
 
-Nginx exposes the web application and forwards `/api/` and WebSocket traffic to the API. The scanner container runs as a non-root user with dropped capabilities, no-new-privileges, a read-only filesystem, CPU/memory limits, and a small temporary filesystem.
+Set at least:
+
+- `POSTGRES_PASSWORD` and the same password inside `DATABASE_URL` (host `postgres`, not `localhost`)
+- `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` (long random values)
+- `WEB_ORIGIN` to the URL people type in the browser, for example `http://localhost` or `https://sentinel.example.com`
+- `NEXT_PUBLIC_API_URL=/api` so the dashboard talks to Nginx on the same origin
+
+Generate secrets:
+
+```sh
+openssl rand -hex 32
+```
+
+Start the stack:
+
+```sh
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+```
+
+Nginx listens on port 80, serves the web app, and forwards `/api/` and `/socket.io/` to the API. The API runs Prisma migrations on boot. The scanner container runs as a non-root user with dropped capabilities, no-new-privileges, a read-only filesystem, CPU/memory limits, and a small temporary filesystem.
+
+SMTP (`SMTP_URL`) and Stripe keys are optional. Leave them empty until you want mail delivery or billing.
+
+On a VPS, point DNS at the host, set `WEB_ORIGIN` to `https://your-domain`, put TLS in front of Nginx (Caddy, Traefik, or a host reverse proxy), and keep `.env.production` off the repository.
 
 ## 8. Verification commands
 

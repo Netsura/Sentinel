@@ -15,10 +15,11 @@ const EXEMPT_PATHS = [
 ];
 
 export function csrfCookieOptions(): CookieOptions {
+  const origin = process.env.WEB_ORIGIN ?? '';
   return {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: origin.startsWith('https://'),
     path: '/',
   };
 }

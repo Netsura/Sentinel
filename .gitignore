@@ -11,6 +11,7 @@ node_modules
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # IDEs and editors
 /.idea
@@ -51,3 +52,4 @@ Thumbs.db
 # Next.js
 .next
 out
+.neon

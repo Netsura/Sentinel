@@ -1,5 +1,6 @@
 FROM node:22-alpine AS build
 WORKDIR /app
+RUN apk add --no-cache openssl
 COPY package*.json ./
 RUN npm ci
 COPY . .
@@ -9,7 +10,8 @@ RUN npx nx build scanner --configuration=production
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-RUN addgroup -S sentinel && adduser -S sentinel -G sentinel
+RUN apk add --no-cache openssl \
+  && addgroup -S sentinel && adduser -S sentinel -G sentinel
 COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist/apps/scanner ./dist/apps/scanner

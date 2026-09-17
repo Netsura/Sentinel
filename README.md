@@ -4,23 +4,16 @@ Sentinel is a security monitoring and vulnerability assessment platform for auth
 
 ## Current foundation
 
-- Next.js dashboard shell with score, finding, asset, and scan posture views
-- NestJS API with CORS configuration and `/api/health`
-- Argon2 authentication with JWT access tokens, rotating hashed refresh sessions, logout, and DTO validation
-- Password reset tokens are hashed, expiring, single-use, and revoke active sessions after reset
-- Workspace membership checks with OWNER, ANALYST, and VIEWER role ordering
-- Owner-only member administration with last-owner protection and audit logging
+- Next.js dashboard with live Overview, assets, scans, findings, reports, and schedules
+- NestJS API with CSRF, CORS, WebSockets, `/api/health`, `/api/ready`, and `/api/metrics`
+- Argon2 authentication, JWT access tokens, rotating hashed refresh sessions, and SMTP verify/reset mail
+- Workspace membership with OWNER, ANALYST, and VIEWER roles and audited mutations
 - Workspace-scoped assets with DNS TXT verification and public-target validation
-- BullMQ-backed scan creation with verified-asset gates and a separate scanner worker
-- Safe scanner checks for DNS resolution, HTTPS availability, and security headers
-- Workspace-scoped JSON and CSV security reports generated from completed scans
-- Daily, weekly, and monthly scheduled scans with pause/resume controls
+- Isolated scanner worker with SAFE/NORMAL/AGGRESSIVE profiles (DNS, TLS, HTTP, crawler, discovery)
+- Stripe checkout, webhooks, and workspace billing reconcile
 - Swagger/OpenAPI documentation at `/api/docs`
-- GitHub Actions validation with PostgreSQL, Redis, migrations, builds, tests, and audit checks
-- Prisma schema for users, sessions, workspaces, members, assets, scans, findings, and immutable audit records
-- Workspace-scoped uniqueness and indexes for the primary access-control boundaries
-- Docker Compose services for PostgreSQL 16 and Redis 7
-- Jest test targets and production builds for both applications
+- GitHub Actions validation with PostgreSQL, Redis, migrations, builds, tests, Playwright, and audit checks
+- Production Compose stack: web, API, scanner, Postgres, Redis, and Nginx
 
 ## Architecture
 
@@ -54,6 +47,16 @@ npm run dev:api
 
 The dashboard runs at `http://localhost:3000`. The API health endpoint is `http://localhost:3001/api/health`.
 
+## Production
+
+```sh
+cp .env.production.example .env.production
+# Set POSTGRES_PASSWORD, DATABASE_URL (same password), JWT secrets, and WEB_ORIGIN
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+```
+
+Nginx serves the dashboard on port 80 and proxies `/api/` plus `/socket.io/` to the API. Open `http://localhost`. Stripe and SMTP are optional; leave those variables empty for a first run.
+
 ## Verification
 
 ```sh
@@ -63,16 +66,16 @@ npx nx run-many -t build test --projects=web,api --outputStyle=static
 
 ## Roadmap
 
-See [docs/implementation-status.md](docs/implementation-status.md) for the current phase matrix and remaining production work.
+See [docs/implementation-status.md](docs/implementation-status.md) for what is shipped and what is still open.
 
 See [docs/how-it-works.md](docs/how-it-works.md) for local startup, request flow, scan processing, and production operation.
 
-1. Email verification and session management UI
-2. TLS certificate checks, controlled crawler, endpoint discovery, and scan cancellation
-3. Scope validation with DNS pinning, worker network isolation, and aggressive-mode authorization
-4. Historical scan results and diff engine
-5. Notification email/webhooks, S3 report storage, and observability
-6. Integration/E2E coverage and cloud deployment hardening
-7. AI explanations grounded in deterministic finding evidence
+Still open:
 
-Security-sensitive behavior is implemented incrementally. Active and aggressive scanning will require verified ownership and explicit authorization, with strict scope and network safeguards before worker functionality is enabled.
+1. Finding-resolved notifications, plus email/Slack/Discord/webhook adapters
+2. Raw DNS/TLS/HTTP history beyond finding diffs, and S3 report storage
+3. Scanner egress policy, HTTPS cookie/session hardening, and cloud deploy
+4. Deeper integration/E2E coverage through scanner completion
+5. AI explanations grounded in deterministic finding evidence
+
+Security-sensitive behavior is implemented incrementally. Active and aggressive scanning require verified ownership, with strict scope and network safeguards in the worker.
