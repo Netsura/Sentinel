@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { NotificationType, PrismaClient, ScanStatus } from '@prisma/client';
 import { Job, Worker } from 'bullmq';
 import Redis from 'ioredis';
@@ -90,6 +91,16 @@ worker.on('failed', async (job, error) => {
 });
 
 worker.on('ready', () => console.log(JSON.stringify({ level: 'info', message: 'scanner.ready', concurrency: worker.concurrency })));
+
+const port = Number(process.env.PORT);
+if (Number.isFinite(port) && port > 0) {
+  createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', service: 'sentinel-scanner' }));
+  }).listen(port, '0.0.0.0', () => {
+    console.log(JSON.stringify({ level: 'info', message: 'scanner.health', port }));
+  });
+}
 
 async function shutdown() {
   await worker.close().catch(() => undefined);
