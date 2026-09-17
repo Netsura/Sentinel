@@ -17,17 +17,17 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
+  app.enableCors({
+    origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000',
+    credentials: true,
+    allowedHeaders: ['Authorization', 'Content-Type', 'x-workspace-id', 'x-csrf-token'],
+  });
   app.use(cookieParser());
   app.use(requestContextMiddleware);
   app.use(csrfProtection);
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   const swaggerConfig = new DocumentBuilder().setTitle('Sentinel API').setDescription('Security monitoring and vulnerability assessment API').setVersion('1.0').addBearerAuth().build();
   SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, swaggerConfig));
-  app.enableCors({
-    origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000',
-    credentials: true,
-    allowedHeaders: ['Authorization', 'Content-Type', 'x-workspace-id', 'x-csrf-token'],
-  });
   const port = process.env.API_PORT || process.env.PORT || 3001;
   await app.listen(port, '0.0.0.0');
   Logger.log(`Sentinel API is running on: http://localhost:${port}/${globalPrefix}`);

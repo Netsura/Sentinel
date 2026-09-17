@@ -21,6 +21,27 @@ describe('csrfProtection', () => {
     expect(next.mock.calls.every(([error]) => error === undefined)).toBe(true);
   });
 
+  it('allows mutating requests from the configured web origin', () => {
+    const previous = process.env.WEB_ORIGIN;
+    process.env.WEB_ORIGIN = 'https://sentinel-web-x227.onrender.com';
+    try {
+      const next = jest.fn();
+      csrfProtection(
+        {
+          method: 'POST',
+          path: '/api/auth/login',
+          cookies: {},
+          headers: { origin: 'https://sentinel-web-x227.onrender.com' },
+        } as unknown as Request,
+        {} as Response,
+        next,
+      );
+      expect(next).toHaveBeenCalledWith();
+    } finally {
+      process.env.WEB_ORIGIN = previous;
+    }
+  });
+
   it('rejects mutating requests without a matching header', () => {
     const next = jest.fn();
     csrfProtection({ method: 'POST', path: '/api/auth/login', cookies: { [CSRF_COOKIE]: 'abc' }, headers: {} } as unknown as Request, {} as Response, next);

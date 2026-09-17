@@ -14,12 +14,17 @@ const EXEMPT_PATHS = [
   /^\/api\/billing\/webhook$/,
 ];
 
+function allowedWebOrigin() {
+  return process.env.WEB_ORIGIN ?? 'http://localhost:3000';
+}
+
 export function csrfCookieOptions(): CookieOptions {
-  const origin = process.env.WEB_ORIGIN ?? '';
+  const origin = allowedWebOrigin();
+  const secure = origin.startsWith('https://');
   return {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: origin.startsWith('https://'),
+    sameSite: secure ? 'none' : 'lax',
+    secure,
     path: '/',
   };
 }
@@ -33,6 +38,12 @@ export function issueCsrfToken(req: Request, res: Response) {
 
 export function csrfProtection(req: Request, _res: Response, next: NextFunction) {
   if (SAFE_METHODS.has(req.method) || EXEMPT_PATHS.some((pattern) => pattern.test(req.path))) {
+    next();
+    return;
+  }
+
+  const requestOrigin = req.headers.origin;
+  if (typeof requestOrigin === 'string' && requestOrigin === allowedWebOrigin()) {
     next();
     return;
   }
