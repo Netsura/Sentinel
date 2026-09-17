@@ -10,7 +10,13 @@
     "lint": "nx run-many -t lint",
     "typecheck": "nx run-many -t typecheck",
     "db:generate": "prisma generate --schema=packages/database/prisma/schema.prisma",
-    "db:migrate": "prisma migrate dev --schema=packages/database/prisma/schema.prisma"
+    "db:migrate": "prisma migrate dev --schema=packages/database/prisma/schema.prisma",
+    "render:build-web": "nx build web --configuration=production",
+    "render:start-web": "next start apps/web --hostname 0.0.0.0 --port ${PORT:-3000}",
+    "render:build-api": "prisma generate --schema=packages/database/prisma/schema.prisma && nx build api --configuration=production",
+    "render:start-api": "prisma migrate deploy --schema=packages/database/prisma/schema.prisma && node dist/apps/api/main.js",
+    "render:build-scanner": "prisma generate --schema=packages/database/prisma/schema.prisma && nx build scanner --configuration=production",
+    "render:start-scanner": "node dist/apps/scanner/main.js"
   },
   "private": true,
   "engines": {
