@@ -5,6 +5,14 @@ import Redis from 'ioredis';
 import { resolveScanJob, ScheduledJobData } from './scan-jobs';
 import { ScanCancelledError, ScanJobData, ScanRunner } from './scan-runner';
 
+const port = Number(process.env.PORT || 10000);
+const healthServer = createServer((_req, res) => {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ status: 'ok', service: 'sentinel-scanner' }));
+}).listen(port, '0.0.0.0', () => {
+  console.log(JSON.stringify({ level: 'info', message: 'scanner.health', port }));
+});
+
 const redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
 const prisma = new PrismaClient();
 const publisher = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null });
@@ -92,17 +100,8 @@ worker.on('failed', async (job, error) => {
 
 worker.on('ready', () => console.log(JSON.stringify({ level: 'info', message: 'scanner.ready', concurrency: worker.concurrency })));
 
-const port = Number(process.env.PORT);
-if (Number.isFinite(port) && port > 0) {
-  createServer((_req, res) => {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: 'sentinel-scanner' }));
-  }).listen(port, '0.0.0.0', () => {
-    console.log(JSON.stringify({ level: 'info', message: 'scanner.health', port }));
-  });
-}
-
 async function shutdown() {
+  await new Promise<void>((resolve) => healthServer.close(() => resolve()));
   await worker.close().catch(() => undefined);
   await publisher.quit().catch(() => undefined);
   await prisma.$disconnect().catch(() => undefined);
