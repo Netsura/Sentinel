@@ -13,6 +13,9 @@
     "db:migrate": "prisma migrate dev --schema=packages/database/prisma/schema.prisma"
   },
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "devDependencies": {
     "@eslint/js": "^9.8.0",
     "@nestjs/testing": "^11.2.3",
@@ -26,6 +29,8 @@
     "@nx/next": "^23.2.0",
     "@nx/node": "^23.2.0",
     "@nx/playwright": "^23.2.0",
+    "@nx/vite": "^23.2.0",
+    "@nx/vitest": "^23.2.0",
     "@nx/webpack": "23.2.0",
     "@nx/workspace": "23.2.0",
     "@playwright/test": "^1.37.0",
@@ -62,9 +67,12 @@
     "tslib": "^2.3.0",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.58.0",
+    "vite": "^8.3.0",
     "webpack-cli": "^7.2.3"
   },
   "dependencies": {
+    "@neon/config": "^1.7.0",
+    "@neon/env": "^1.4.1",
     "@nestjs/common": "^11.2.3",
     "@nestjs/core": "^11.2.3",
     "@nestjs/jwt": "^11.0.2",
