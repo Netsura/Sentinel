@@ -2,14 +2,16 @@ import { BadRequestException, Injectable, NotFoundException, OnModuleDestroy } f
 import { AssetType, ScheduleFrequency, ScanMode, VerificationStatus, WorkspaceRole } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { AuthUser } from '../auth/auth.service';
+import { isPlatformAdmin } from '../auth/platform-admin';
 import { withAudit } from '../common/audit';
+import { bullmqRedisOptions } from '../common/bullmq-connection';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { CreateScheduleDto } from './schedules.dto';
 
 @Injectable()
 export class SchedulesService implements OnModuleDestroy {
-  private readonly queue = new Queue('scan', { connection: { url: process.env.REDIS_URL ?? 'redis://localhost:6379' } as never });
+  private readonly queue = new Queue('scan', { connection: bullmqRedisOptions() });
 
   constructor(private readonly prisma: PrismaService, private readonly workspaces: WorkspacesService) {}
 
@@ -26,7 +28,9 @@ export class SchedulesService implements OnModuleDestroy {
     await this.workspaces.requireMembership(user, workspaceId, WorkspaceRole.ANALYST);
     const asset = await this.prisma.asset.findFirst({ where: { id: dto.assetId, workspaceId } });
     if (!asset) throw new NotFoundException('Asset not found');
-    if (dto.mode !== ScanMode.SAFE && asset.verificationStatus !== VerificationStatus.VERIFIED) throw new BadRequestException('Active scheduled scans require a verified asset');
+    if (dto.mode !== ScanMode.SAFE && asset.verificationStatus !== VerificationStatus.VERIFIED && !isPlatformAdmin(user.email)) {
+      throw new BadRequestException('Active scheduled scans require a verified asset');
+    }
     if (asset.type === AssetType.IP && dto.mode === ScanMode.AGGRESSIVE) throw new BadRequestException('Aggressive IP schedules require explicit authorization');
     const nextRunAt = this.nextRun(dto.frequency);
     const schedule = await withAudit(this.prisma, { workspaceId, userId: user.id, action: 'SCHEDULE_CREATED', resource: 'ScheduledScan', metadata: { assetId: asset.id, mode: dto.mode, frequency: dto.frequency } }, (tx) =>

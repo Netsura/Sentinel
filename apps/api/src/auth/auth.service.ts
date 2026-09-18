@@ -6,6 +6,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ForgotPasswordDto, LoginDto, RegisterDto, ResetPasswordDto, VerifyEmailDto } from './auth.dto';
+import { isPlatformAdmin } from './platform-admin';
 
 export type AuthUser = { id: string; email: string };
 
@@ -28,7 +29,10 @@ export class AuthService {
     const verificationToken = randomBytes(32).toString('base64url');
 
     const user = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.user.create({ data: { email, passwordHash }, select: { id: true, email: true } });
+      const created = await tx.user.create({
+        data: { email, passwordHash, emailVerified: isPlatformAdmin(email) ? new Date() : undefined },
+        select: { id: true, email: true },
+      });
       const workspace = await tx.workspace.create({
         data: { name: 'Personal workspace', members: { create: { userId: created.id, role: WorkspaceRole.OWNER } } },
       });

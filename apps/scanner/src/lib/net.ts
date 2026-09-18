@@ -37,13 +37,31 @@ export function isIpLiteral(value: string) {
   return value.includes(':') || /^\d{1,3}(\.\d{1,3}){3}$/.test(value);
 }
 
-export async function resolvePublicAddresses(hostname: string) {
+export async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export async function resolvePublicAddresses(hostname: string, timeoutMs = 8_000) {
   if (isIpLiteral(hostname)) {
     if (isPrivateAddress(hostname)) throw new UnroutableTargetError(hostname);
     return [hostname];
   }
 
-  const resolved = await dns.lookup(hostname, { all: true, verbatim: true }).catch(() => []);
+  const resolved = await withTimeout(
+    dns.lookup(hostname, { all: true, verbatim: true }).catch(() => [] as Array<{ address: string }>),
+    timeoutMs,
+    `DNS lookup timed out for ${hostname}`,
+  ).catch(() => [] as Array<{ address: string }>);
   const addresses = resolved.map(({ address }) => address).sort();
   if (!addresses.length || addresses.some(isPrivateAddress)) throw new UnroutableTargetError(hostname);
   return addresses;

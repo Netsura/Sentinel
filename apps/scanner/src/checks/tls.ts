@@ -16,6 +16,7 @@ type Handshake = {
 
 function connect(hostname: string, options: tls.ConnectionOptions, timeoutMs: number) {
   return new Promise<Handshake>((resolve, reject) => {
+    let settled = false;
     const socket = tls.connect(
       {
         host: hostname,
@@ -32,16 +33,20 @@ function connect(hostname: string, options: tls.ConnectionOptions, timeoutMs: nu
           cipher: socket.getCipher(),
           authorizationError: socket.authorizationError ? String(socket.authorizationError) : null,
         };
-        socket.end();
-        resolve(handshake);
+        finish(null, handshake);
       },
     );
 
-    socket.once('error', reject);
-    socket.once('timeout', () => {
+    const finish = (error: Error | null, handshake?: Handshake) => {
+      if (settled) return;
+      settled = true;
       socket.destroy();
-      reject(new Error('TLS handshake timed out'));
-    });
+      if (error || !handshake) reject(error ?? new Error('TLS handshake failed'));
+      else resolve(handshake);
+    };
+
+    socket.once('error', (error) => finish(error));
+    socket.once('timeout', () => finish(new Error('TLS handshake timed out')));
   });
 }
 
