@@ -7,12 +7,13 @@ import { fetchLandingPage, httpFindings } from './checks/http';
 import { subdomainFindings } from './checks/subdomains';
 import { tlsFindings } from './checks/tls';
 import { dedupeFindings, FindingInput, scoreFindings } from './lib/findings';
-import { isIpLiteral, resolvePublicAddresses, SafeHttpClient } from './lib/net';
+import { isIpLiteral, resolvePublicAddresses, SafeHttpClient, withTimeout } from './lib/net';
 import { SCAN_PROFILES, Stage, stageProgress } from './lib/profiles';
 
 export type ScanJobData = { scanId: string; workspaceId: string; assetId: string; mode: ScanMode };
 
 export class ScanCancelledError extends Error {
+  readonly name = 'ScanCancelledError';
   constructor() {
     super('Scan was cancelled');
   }
@@ -37,7 +38,7 @@ export class ScanRunner {
     const hostname = scan.asset.value;
     const isIp = scan.asset.type === AssetType.IP || isIpLiteral(hostname);
 
-    await this.begin(scanId);
+    await this.begin(scanId, scan.startedAt);
     await this.stage(scanId, mode, 'INITIALIZING');
 
     const addresses = await resolvePublicAddresses(hostname);
@@ -100,24 +101,37 @@ export class ScanRunner {
     return { score, findings: deduped.length, requests: client.used, skipped: false };
   }
 
-  private async begin(scanId: string) {
-    await this.prisma.scan.update({
-      where: { id: scanId },
-      data: { status: ScanStatus.RUNNING, stage: 'INITIALIZING', progress: 1, startedAt: new Date() },
+  private async begin(scanId: string, startedAt: Date | null) {
+    const claimed = await this.prisma.scan.updateMany({
+      where: { id: scanId, status: { in: [ScanStatus.QUEUED, ScanStatus.RUNNING] } },
+      data: { status: ScanStatus.RUNNING, stage: 'INITIALIZING', progress: 1, startedAt: startedAt ?? new Date() },
     });
+    if (claimed.count === 0) await this.guardCancellation(scanId);
   }
 
   private async stage(scanId: string, mode: ScanMode, stage: Stage) {
     const progress = stageProgress(mode, stage);
-    await this.prisma.scan.update({ where: { id: scanId }, data: { stage, progress } });
+    const updated = await this.prisma.scan.updateMany({
+      where: { id: scanId, status: ScanStatus.RUNNING },
+      data: { stage, progress },
+    });
+    if (updated.count === 0) await this.guardCancellation(scanId);
     await this.publish(scanId, stage, progress);
   }
 
   private async publish(scanId: string, stage: string, progress: number) {
-    if (this.publisher.status === 'wait' || this.publisher.status === 'close' || this.publisher.status === 'end') {
-      await this.publisher.connect().catch(() => undefined);
+    try {
+      if (this.publisher.status !== 'ready') {
+        await withTimeout(this.publisher.connect(), 2_000, 'Redis publish connect timed out');
+      }
+      await withTimeout(
+        this.publisher.publish('scan.progress', JSON.stringify({ scanId, stage, progress })),
+        2_000,
+        'Redis publish timed out',
+      );
+    } catch (error) {
+      console.error(`[SCAN] Progress publish failed ${scanId} ${error instanceof Error ? error.message : error}`);
     }
-    await this.publisher.publish('scan.progress', JSON.stringify({ scanId, stage, progress })).catch(() => undefined);
   }
 
   /** Cancellation removes the queue job, but a scan already in flight has to notice on its own. */
@@ -143,46 +157,50 @@ export class ScanRunner {
     });
     if (claimed.count === 0) return;
 
-    const scan = await this.prisma.scan.findUniqueOrThrow({
-      where: { id: scanId },
-      include: { asset: { select: { id: true, value: true, securityScore: true } } },
-    });
-
-    const previousScore = scan.asset.securityScore;
-
-    await this.prisma.asset.update({
-      where: { id: scan.assetId },
-      data: { securityScore: score, lastScanAt: new Date() },
-    });
-
-    const notifications: Array<{ type: NotificationType; title: string; message: string }> = [
-      {
-        type: NotificationType.SCAN_COMPLETED,
-        title: 'Scan completed',
-        message: `The ${scan.mode.toLowerCase()} scan of ${scan.asset.value} finished with a score of ${score} from ${findings.length} finding(s) across ${requests} request(s).`,
-      },
-    ];
-
-    const urgent = findings.filter((finding) => finding.severity === Severity.CRITICAL || finding.severity === Severity.HIGH);
-    if (urgent.length) {
-      notifications.push({
-        type: NotificationType.CRITICAL_FINDING,
-        title: `${urgent.length} high-severity finding(s) on ${scan.asset.value}`,
-        message: `Most severe: ${urgent[0].title}. Review the findings view for evidence and remediation guidance.`,
+    try {
+      const scan = await this.prisma.scan.findUniqueOrThrow({
+        where: { id: scanId },
+        include: { asset: { select: { id: true, value: true, securityScore: true } } },
       });
-    }
 
-    if (previousScore !== null && score <= previousScore - SCORE_DROP_THRESHOLD) {
-      notifications.push({
-        type: NotificationType.SCORE_DROP,
-        title: `Security score dropped on ${scan.asset.value}`,
-        message: `The score fell from ${previousScore} to ${score} since the previous scan.`,
+      const previousScore = scan.asset.securityScore;
+
+      await this.prisma.asset.update({
+        where: { id: scan.assetId },
+        data: { securityScore: score, lastScanAt: new Date() },
       });
-    }
 
-    await this.prisma.notification.createMany({
-      data: notifications.map((notification) => ({ ...notification, workspaceId: scan.workspaceId, userId: scan.startedById })),
-    });
+      const notifications: Array<{ type: NotificationType; title: string; message: string }> = [
+        {
+          type: NotificationType.SCAN_COMPLETED,
+          title: 'Scan completed',
+          message: `The ${scan.mode.toLowerCase()} scan of ${scan.asset.value} finished with a score of ${score} from ${findings.length} finding(s) across ${requests} request(s).`,
+        },
+      ];
+
+      const urgent = findings.filter((finding) => finding.severity === Severity.CRITICAL || finding.severity === Severity.HIGH);
+      if (urgent.length) {
+        notifications.push({
+          type: NotificationType.CRITICAL_FINDING,
+          title: `${urgent.length} high-severity finding(s) on ${scan.asset.value}`,
+          message: `Most severe: ${urgent[0].title}. Review the findings view for evidence and remediation guidance.`,
+        });
+      }
+
+      if (previousScore !== null && score <= previousScore - SCORE_DROP_THRESHOLD) {
+        notifications.push({
+          type: NotificationType.SCORE_DROP,
+          title: `Security score dropped on ${scan.asset.value}`,
+          message: `The score fell from ${previousScore} to ${score} since the previous scan.`,
+        });
+      }
+
+      await this.prisma.notification.createMany({
+        data: notifications.map((notification) => ({ ...notification, workspaceId: scan.workspaceId, userId: scan.startedById })),
+      });
+    } catch (error) {
+      console.error(`[SCAN] Completion side effects failed ${scanId} ${error instanceof Error ? error.message : error}`);
+    }
 
     await this.publish(scanId, 'COMPLETED', 100);
   }

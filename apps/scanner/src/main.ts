@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { NotificationType, PrismaClient, ScanStatus } from '@prisma/client';
 import { Job, Worker } from 'bullmq';
-import Redis from 'ioredis';
+import { createBullmqConnection } from './lib/redis';
 import { resolveScanJob, ScheduledJobData } from './scan-jobs';
 import { ScanCancelledError, ScanJobData, ScanRunner } from './scan-runner';
 
@@ -15,7 +15,8 @@ const healthServer = createServer((_req, res) => {
 
 const redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
 const prisma = new PrismaClient();
-const publisher = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: null });
+const workerRedis = createBullmqConnection(redisUrl, 'worker');
+const publisher = createBullmqConnection(redisUrl, 'publisher');
 const runner = new ScanRunner(prisma, publisher);
 
 const worker = new Worker<ScanJobData | ScheduledJobData>(
@@ -43,8 +44,22 @@ const worker = new Worker<ScanJobData | ScheduledJobData>(
     );
     return result;
   },
-  { connection: { url: redisUrl } as never, concurrency: Number(process.env.SCANNER_CONCURRENCY ?? 2) },
+  {
+    connection: workerRedis,
+    concurrency: Number(process.env.SCANNER_CONCURRENCY ?? 2),
+    lockDuration: 120_000,
+    stalledInterval: 30_000,
+  },
 );
+
+worker.on('ready', () => {
+  console.log('[BULLMQ] Worker ready');
+  console.log(JSON.stringify({ level: 'info', message: 'scanner.ready', concurrency: worker.concurrency }));
+});
+worker.on('active', (job) => console.log(`[SCAN] Starting job ${job.id}`));
+worker.on('completed', (job) => console.log(`[SCAN] Completed job ${job.id}`));
+worker.on('stalled', (jobId) => console.error(`[BULLMQ] Job stalled ${jobId}`));
+worker.on('error', (error) => console.error(`[BULLMQ] Worker error ${error.message}`));
 
 worker.on('failed', async (job, error) => {
   if (!job) return;
@@ -53,6 +68,7 @@ worker.on('failed', async (job, error) => {
   const attemptsExhausted = (job.attemptsMade ?? 0) >= (job.opts.attempts ?? 1);
   const scanId = (job.data as ScanJobData).scanId;
 
+  console.error(`[SCAN] Failed job ${job.id}`);
   console.error(
     JSON.stringify({
       level: 'error',
@@ -95,14 +111,17 @@ worker.on('failed', async (job, error) => {
       .catch(() => undefined);
   }
 
-  await publisher.publish('scan.progress', JSON.stringify({ scanId, stage: 'FAILED', progress: 100 })).catch(() => undefined);
+  try {
+    await publisher.publish('scan.progress', JSON.stringify({ scanId, stage: 'FAILED', progress: 100 }));
+  } catch (publishError) {
+    console.error(`[SCAN] Progress publish failed ${scanId} ${publishError instanceof Error ? publishError.message : publishError}`);
+  }
 });
-
-worker.on('ready', () => console.log(JSON.stringify({ level: 'info', message: 'scanner.ready', concurrency: worker.concurrency })));
 
 async function shutdown() {
   await new Promise<void>((resolve) => healthServer.close(() => resolve()));
   await worker.close().catch(() => undefined);
+  await workerRedis.quit().catch(() => undefined);
   await publisher.quit().catch(() => undefined);
   await prisma.$disconnect().catch(() => undefined);
   process.exit(0);

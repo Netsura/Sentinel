@@ -1,4 +1,4 @@
-import { isIpLiteral, isPrivateAddress, sameHost } from './net';
+import { isIpLiteral, isPrivateAddress, sameHost, withTimeout } from './net';
 
 describe('isPrivateAddress', () => {
   it.each([
@@ -46,6 +46,12 @@ describe('isIpLiteral', () => {
 
   it('does not treat hostnames as literals', () => {
     expect(isIpLiteral('example.com')).toBe(false);
+  });
+});
+
+describe('withTimeout', () => {
+  it('rejects when the promise does not settle in time', async () => {
+    await expect(withTimeout(new Promise(() => undefined), 20, 'timed out')).rejects.toThrow('timed out');
   });
 });
 

@@ -3,6 +3,7 @@ import { AssetType, VerificationStatus, WorkspaceRole } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 import { promises as dns } from 'node:dns';
 import { AuthUser } from '../auth/auth.service';
+import { isPlatformAdmin } from '../auth/platform-admin';
 import { withAudit } from '../common/audit';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
@@ -21,8 +22,17 @@ export class AssetsService {
   async create(user: AuthUser, workspaceId: string, dto: CreateAssetDto) {
     await this.workspaces.requireMembership(user, workspaceId, WorkspaceRole.ANALYST);
     const value = normalizeAssetTarget(dto.type, dto.value);
-    return withAudit(this.prisma, { workspaceId, userId: user.id, action: 'ASSET_CREATED', resource: 'Asset', metadata: { type: dto.type, value } }, (tx) =>
-      tx.asset.create({ data: { workspaceId, type: dto.type, value, verificationToken: randomBytes(24).toString('hex') } }),
+    const verified = isPlatformAdmin(user.email);
+    return withAudit(this.prisma, { workspaceId, userId: user.id, action: 'ASSET_CREATED', resource: 'Asset', metadata: { type: dto.type, value, verified } }, (tx) =>
+      tx.asset.create({
+        data: {
+          workspaceId,
+          type: dto.type,
+          value,
+          verificationToken: randomBytes(24).toString('hex'),
+          verificationStatus: verified ? VerificationStatus.VERIFIED : VerificationStatus.PENDING,
+        },
+      }),
     );
   }
 
@@ -30,7 +40,7 @@ export class AssetsService {
     await this.workspaces.requireMembership(user, workspaceId, WorkspaceRole.ANALYST);
     const asset = await this.prisma.asset.findFirst({ where: { id: assetId, workspaceId } });
     if (!asset) throw new NotFoundException('Asset not found');
-    const nextStatus = asset.type === AssetType.IP
+    const nextStatus = isPlatformAdmin(user.email) || asset.type === AssetType.IP
       ? VerificationStatus.VERIFIED
       : await this.lookupDnsStatus(asset.value, asset.verificationToken);
 
@@ -40,7 +50,12 @@ export class AssetsService {
   }
 
   private async lookupDnsStatus(value: string, verificationToken: string | null) {
-    const records = await dns.resolveTxt(`_sentinel.${value}`).catch(() => [] as string[][]);
+    const records = await Promise.race([
+      dns.resolveTxt(`_sentinel.${value}`),
+      new Promise<string[][]>((_, reject) => {
+        setTimeout(() => reject(new Error('DNS verification lookup timed out')), 8_000);
+      }),
+    ]).catch(() => [] as string[][]);
     const expected = `sentinel-verification=${verificationToken}`;
     return records.flat().some((record) => record.trim() === expected) ? VerificationStatus.VERIFIED : VerificationStatus.FAILED;
   }

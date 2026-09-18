@@ -1,6 +1,7 @@
 import { Confidence, Severity } from '@prisma/client';
 import { promises as dns } from 'node:dns';
 import { FindingInput, truncateEvidence } from '../lib/findings';
+import { withTimeout } from '../lib/net';
 
 const CATEGORY = 'DNS';
 
@@ -20,10 +21,10 @@ export async function dnsFindings(hostname: string, addresses: string[], isIp: b
   if (isIp) return findings;
 
   const [txtRecords, dmarcRecords, caaRecords, mxRecords] = await Promise.all([
-    dns.resolveTxt(hostname).catch(() => [] as string[][]),
-    dns.resolveTxt(`_dmarc.${hostname}`).catch(() => [] as string[][]),
-    dns.resolveCaa(hostname).catch(() => [] as { issue?: string; issuewild?: string }[]),
-    dns.resolveMx(hostname).catch(() => [] as { exchange: string; priority: number }[]),
+    withTimeout(dns.resolveTxt(hostname), 8_000, `TXT lookup timed out for ${hostname}`).catch(() => [] as string[][]),
+    withTimeout(dns.resolveTxt(`_dmarc.${hostname}`), 8_000, `DMARC lookup timed out for ${hostname}`).catch(() => [] as string[][]),
+    withTimeout(dns.resolveCaa(hostname), 8_000, `CAA lookup timed out for ${hostname}`).catch(() => [] as { issue?: string; issuewild?: string }[]),
+    withTimeout(dns.resolveMx(hostname), 8_000, `MX lookup timed out for ${hostname}`).catch(() => [] as { exchange: string; priority: number }[]),
   ]);
 
   const flattenedTxt = txtRecords.map((record) => record.join(''));
@@ -91,8 +92,8 @@ export async function dnsFindings(hostname: string, addresses: string[], isIp: b
 
 export async function resolveSubdomain(candidate: string) {
   const [addresses, cname] = await Promise.all([
-    dns.resolve4(candidate).catch(() => [] as string[]),
-    dns.resolveCname(candidate).catch(() => [] as string[]),
+    withTimeout(dns.resolve4(candidate), 8_000, `A lookup timed out for ${candidate}`).catch(() => [] as string[]),
+    withTimeout(dns.resolveCname(candidate), 8_000, `CNAME lookup timed out for ${candidate}`).catch(() => [] as string[]),
   ]);
   return { candidate, addresses, cname };
 }

@@ -10,7 +10,12 @@ export type ScanProgressEvent = { scanId: string; workspaceId?: string; stage: s
 @WebSocketGateway({ namespace: 'scans', cors: { origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000' } })
 export class ScanGateway implements OnModuleInit, OnModuleDestroy {
   @WebSocketServer() server!: Server;
-  private readonly subscriber = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', { lazyConnect: true });
+  private readonly subscriber = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
+    connectionName: 'sentinel-api-subscriber',
+    lazyConnect: true,
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+  });
 
   constructor(private readonly jwt: JwtService, private readonly prisma: PrismaService) {}
 
