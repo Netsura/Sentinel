@@ -162,7 +162,7 @@ Nx writes Next.js output to `apps/web/.next`, not `dist/apps/web`.
 - Build: `npm ci --include=dev && npx prisma generate --schema=packages/database/prisma/schema.prisma && NX_DAEMON=false npx nx build api --configuration=production`
 - Start: `npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma && node dist/apps/api/main.js`
 - Env (required): `DATABASE_URL` (Neon unpooled URL), `REDIS_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `WEB_ORIGIN=https://<web-service>.onrender.com`
-- Optional: `ADMIN_EMAILS=admin@sentinel.dev` (comma-separated). Those users skip asset DNS verification.
+- Optional: `ADMIN_EMAILS=admin@sentinel.dev` (comma-separated). Defaults to `admin@sentinel.dev` if unset. Those users skip asset DNS verification.
 - Do not set `API_PORT`; Render injects `PORT`
 
 **Scanner (Web Service)**
