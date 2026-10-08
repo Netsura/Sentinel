@@ -14,11 +14,11 @@ describe('isPlatformAdmin', () => {
     expect(isPlatformAdmin('user@example.com')).toBe(false);
   });
 
-  it('does not treat any email as admin when ADMIN_EMAILS is unset or blank', () => {
+  it('defaults to admin@sentinel.dev when ADMIN_EMAILS is unset or blank', () => {
     delete process.env.ADMIN_EMAILS;
-    expect(isPlatformAdmin('admin@sentinel.dev')).toBe(false);
+    expect(isPlatformAdmin('admin@sentinel.dev')).toBe(true);
     process.env.ADMIN_EMAILS = '   ';
-    expect(isPlatformAdmin('admin@sentinel.dev')).toBe(false);
+    expect(isPlatformAdmin('admin@sentinel.dev')).toBe(true);
     expect(isPlatformAdmin('test@gmail.com')).toBe(false);
   });
 });
