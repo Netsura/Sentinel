@@ -26,10 +26,11 @@ export class SchedulesService implements OnModuleDestroy {
 
   async create(user: AuthUser, workspaceId: string, dto: CreateScheduleDto) {
     await this.workspaces.requireMembership(user, workspaceId, WorkspaceRole.ANALYST);
+    await this.workspaces.assertBillingAllowsScans(workspaceId);
     const asset = await this.prisma.asset.findFirst({ where: { id: dto.assetId, workspaceId } });
     if (!asset) throw new NotFoundException('Asset not found');
-    if (dto.mode !== ScanMode.SAFE && asset.verificationStatus !== VerificationStatus.VERIFIED && !isPlatformAdmin(user.email)) {
-      throw new BadRequestException('Active scheduled scans require a verified asset');
+    if (asset.verificationStatus !== VerificationStatus.VERIFIED && !isPlatformAdmin(user.email)) {
+      throw new BadRequestException('Verify this asset before scheduling scans');
     }
     if (asset.type === AssetType.IP && dto.mode === ScanMode.AGGRESSIVE) throw new BadRequestException('Aggressive IP schedules require explicit authorization');
     const nextRunAt = this.nextRun(dto.frequency);

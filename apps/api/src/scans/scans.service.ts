@@ -33,10 +33,11 @@ export class ScansService implements OnModuleDestroy {
 
   async start(user: AuthUser, workspaceId: string, dto: CreateScanDto) {
     await this.workspaces.requireMembership(user, workspaceId, WorkspaceRole.ANALYST);
+    await this.workspaces.assertBillingAllowsScans(workspaceId);
     const asset = await this.prisma.asset.findFirst({ where: { id: dto.assetId, workspaceId } });
     if (!asset) throw new NotFoundException('Asset not found');
-    if (dto.mode !== ScanMode.SAFE && asset.verificationStatus !== VerificationStatus.VERIFIED && !isPlatformAdmin(user.email)) {
-      throw new BadRequestException('Active scans require a verified asset');
+    if (asset.verificationStatus !== VerificationStatus.VERIFIED && !isPlatformAdmin(user.email)) {
+      throw new BadRequestException('Verify this asset before scanning');
     }
     if (asset.type === AssetType.IP && dto.mode === ScanMode.AGGRESSIVE) throw new BadRequestException('Aggressive IP scanning requires an explicit authorization workflow');
 
@@ -65,6 +66,8 @@ export class ScansService implements OnModuleDestroy {
     if (scan.status === ScanStatus.COMPLETED || scan.status === ScanStatus.FAILED || scan.status === ScanStatus.CANCELLED) return scan;
     const job = await this.queue.getJob(scan.id);
     const state = await job?.getState().catch(() => undefined);
+    // Active jobs keep running until the worker sees CANCELLED in the database.
+    // Removing a waiting/delayed job prevents retries from starting after cancel.
     if (job && state && state !== 'active' && state !== 'completed' && state !== 'failed') {
       await job.remove().catch(() => undefined);
     }

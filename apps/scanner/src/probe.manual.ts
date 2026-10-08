@@ -11,7 +11,7 @@ import { fetchLandingPage, httpFindings } from './checks/http';
 import { subdomainFindings } from './checks/subdomains';
 import { tlsFindings } from './checks/tls';
 import { dedupeFindings, FindingInput, scoreFindings } from './lib/findings';
-import { isIpLiteral, resolvePublicAddresses, SafeHttpClient } from './lib/net';
+import { isIpLiteral, pinnedConnectAddress, resolvePublicAddresses, SafeHttpClient } from './lib/net';
 import { SCAN_PROFILES } from './lib/profiles';
 
 async function main() {
@@ -30,7 +30,7 @@ async function main() {
   findings.push(...(await dnsFindings(hostname, addresses, isIp)));
   console.log(`after DNS:       ${findings.length} findings`);
 
-  findings.push(...(await tlsFindings(hostname, profile.http.timeoutMs, profile.probeLegacyTls)));
+  findings.push(...(await tlsFindings(hostname, pinnedConnectAddress(addresses), profile.http.timeoutMs, profile.probeLegacyTls)));
   console.log(`after TLS:       ${findings.length} findings`);
 
   const { response: landing } = await fetchLandingPage(client, hostname);

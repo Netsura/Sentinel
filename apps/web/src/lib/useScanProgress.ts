@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { getAccessToken, websocketBaseUrl } from './api';
 
@@ -13,38 +13,43 @@ export type ScanProgress = { stage: string; progress: number };
  */
 export function useScanProgress(scanIds: string[]) {
   const [progress, setProgress] = useState<Record<string, ScanProgress>>({});
-  const socketRef = useRef<Socket | null>(null);
-  const subscribed = useRef<Set<string>>(new Set());
   const key = [...scanIds].sort().join(',');
 
   useEffect(() => {
     if (!key) return;
 
-    if (!socketRef.current) {
-      socketRef.current = io(`${websocketBaseUrl()}/scans`, { transports: ['websocket'], reconnectionAttempts: 5 });
-      socketRef.current.on('scan.progress', (event: { scanId: string; stage: string; progress: number }) => {
-        setProgress((current) => ({ ...current, [event.scanId]: { stage: event.stage, progress: event.progress } }));
-      });
-    }
+    let socket: Socket | null = null;
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const subscribed = new Set<string>();
 
-    const socket = socketRef.current;
-    const token = getAccessToken();
-    if (!token) return;
-
-    for (const scanId of key.split(',')) {
-      if (subscribed.current.has(scanId)) continue;
-      subscribed.current.add(scanId);
-      socket.emit('scan.subscribe', { token, scanId });
-    }
-  }, [key]);
-
-  useEffect(() => {
-    return () => {
-      socketRef.current?.disconnect();
-      socketRef.current = null;
-      subscribed.current.clear();
+    const subscribeAll = () => {
+      const token = getAccessToken();
+      if (!token) return false;
+      if (!socket) {
+        socket = io(`${websocketBaseUrl()}/scans`, { transports: ['websocket'], reconnectionAttempts: 5 });
+        socket.on('scan.progress', (event: { scanId: string; stage: string; progress: number }) => {
+          setProgress((current) => ({ ...current, [event.scanId]: { stage: event.stage, progress: event.progress } }));
+        });
+      }
+      for (const scanId of key.split(',')) {
+        if (subscribed.has(scanId)) continue;
+        subscribed.add(scanId);
+        socket.emit('scan.subscribe', { token, scanId });
+      }
+      return true;
     };
-  }, []);
+
+    if (!subscribeAll()) {
+      interval = setInterval(() => {
+        if (subscribeAll() && interval) clearInterval(interval);
+      }, 400);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+      socket?.disconnect();
+    };
+  }, [key]);
 
   return progress;
 }

@@ -56,6 +56,9 @@ export class AuthService {
     if (!user || !(await argon2.verify(user.passwordHash, dto.password))) {
       throw new UnauthorizedException('Invalid email or password');
     }
+    if (!user.emailVerified && !isPlatformAdmin(user.email)) {
+      throw new UnauthorizedException('Verify your email before signing in');
+    }
 
     const tokens = await this.issueTokens({ id: user.id, email: user.email });
     return { ...tokens, user: { id: user.id, email: user.email } };
@@ -108,16 +111,29 @@ export class AuthService {
     return { success: true };
   }
 
-  async validateAccessToken(payload: { sub?: string; email?: string }): Promise<AuthUser> {
-    if (!payload.sub || !payload.email) throw new UnauthorizedException('Invalid access token');
-    return { id: payload.sub, email: payload.email };
+  async validateAccessToken(payload: { sub?: string; email?: string; typ?: string }): Promise<AuthUser> {
+    if (payload.typ !== 'access' || !payload.sub) throw new UnauthorizedException('Invalid access token');
+    const user = await this.prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true } });
+    if (!user) throw new UnauthorizedException('Invalid access token');
+    return user;
   }
 
   private async issueTokens(user: AuthUser): Promise<TokenPair> {
-    const accessToken = await this.jwt.signAsync({ sub: user.id, email: user.email }, { expiresIn: '15m' });
+    const accessToken = await this.jwt.signAsync({ sub: user.id, email: user.email, typ: 'access' }, { expiresIn: '15m' });
     const refreshToken = randomBytes(48).toString('base64url');
-    await this.prisma.authSession.create({
-      data: { userId: user.id, refreshTokenHash: this.hashToken(refreshToken), expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.authSession.create({
+        data: { userId: user.id, refreshTokenHash: this.hashToken(refreshToken), expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
+      });
+      const sessions = await tx.authSession.findMany({
+        where: { userId: user.id, revokedAt: null },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      const overflow = sessions.slice(0, Math.max(0, sessions.length - 20));
+      if (overflow.length) {
+        await tx.authSession.updateMany({ where: { id: { in: overflow.map((session) => session.id) } }, data: { revokedAt: new Date() } });
+      }
     });
     return { accessToken, refreshToken };
   }

@@ -1,5 +1,5 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { FindingStatus, ScanStatus, Severity, VerificationStatus, WorkspaceRole } from '@prisma/client';
+import { BillingStatus, FindingStatus, ScanStatus, Severity, VerificationStatus, WorkspaceRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/auth.service';
 import { withAudit } from '../common/audit';
@@ -119,6 +119,18 @@ export class WorkspacesService {
       tx.workspaceMember.delete({ where: { id: memberId } }),
     );
     return { success: true };
+  }
+
+  async assertBillingAllowsScans(workspaceId: string) {
+    const workspace = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { billingStatus: true } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    if (
+      workspace.billingStatus === BillingStatus.PAST_DUE ||
+      workspace.billingStatus === BillingStatus.UNPAID ||
+      workspace.billingStatus === BillingStatus.CANCELED
+    ) {
+      throw new ForbiddenException('Workspace billing is not in good standing');
+    }
   }
 
   async requireMembership(user: AuthUser, workspaceId: string, minimumRole?: WorkspaceRole) {

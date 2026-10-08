@@ -13,7 +13,7 @@ export class JwtAuthGuard implements CanActivate {
     const header = request.headers.authorization;
     if (!header?.startsWith('Bearer ')) throw new UnauthorizedException('Bearer token required');
     try {
-      const payload = await this.jwt.verifyAsync<{ sub?: string; email?: string }>(header.slice(7));
+      const payload = await this.jwt.verifyAsync<{ sub?: string; email?: string; typ?: string }>(header.slice(7));
       request.user = await this.auth.validateAccessToken(payload);
       return true;
     } catch {

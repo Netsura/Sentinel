@@ -1,4 +1,4 @@
-import { Confidence, Severity } from '@prisma/client';
+import { Confidence, FindingStatus, Severity } from '@prisma/client';
 
 export type FindingInput = {
   title: string;
@@ -66,4 +66,13 @@ export function dedupeFindings(findings: FindingInput[]) {
 export function truncateEvidence(value: string, limit = 600) {
   const collapsed = value.replace(/\s+/g, ' ').trim();
   return collapsed.length <= limit ? collapsed : `${collapsed.slice(0, limit)}…`;
+}
+
+export function findingIdentity(finding: { category: string; title: string }) {
+  return `${finding.category}:${finding.title}`;
+}
+
+export function carriedFindingStatus(prior?: FindingStatus | null) {
+  if (prior === FindingStatus.ACKNOWLEDGED || prior === FindingStatus.FALSE_POSITIVE) return prior;
+  return FindingStatus.OPEN;
 }

@@ -5,6 +5,7 @@
   "scripts": {
     "dev:web": "nx dev web",
     "dev:api": "nx serve api",
+    "dev:scanner": "nx serve scanner",
     "build": "nx run-many -t build",
     "test": "nx run-many -t test",
     "lint": "nx run-many -t lint",

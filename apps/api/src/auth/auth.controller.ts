@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthService, AuthUser } from './auth.service';
 import { ForgotPasswordDto, LoginDto, RefreshDto, RegisterDto, ResetPasswordDto, VerifyEmailDto } from './auth.dto';
@@ -10,6 +11,7 @@ import { issueCsrfToken } from './csrf';
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
+  @SkipThrottle()
   @Get('csrf')
   csrf(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     return { csrfToken: issueCsrfToken(req, res) };

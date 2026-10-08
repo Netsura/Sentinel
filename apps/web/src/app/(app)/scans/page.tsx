@@ -68,7 +68,7 @@ function ScansView() {
 
   const selectedAsset = assets.find((asset) => asset.id === assetId);
   const assetVerified = selectedAsset?.verificationStatus === 'VERIFIED';
-  const modeLocked = mode !== 'SAFE' && !assetVerified;
+  const modeLocked = !assetVerified;
 
   async function launch() {
     setError('');
@@ -113,7 +113,7 @@ function ScansView() {
       <PageHeader
         eyebrow="ASSESS"
         title="Scans"
-        subtitle="Safe mode is passive and always available. Normal and aggressive modes send active requests and require a verified asset."
+        subtitle="Every scan mode requires a verified asset. Safe stays passive; normal and aggressive send bounded active requests."
       />
 
       {assets.length === 0 ? (
@@ -140,7 +140,7 @@ function ScansView() {
 
           <div className={styles.modeGrid}>
             {SCAN_MODES.map((option) => {
-              const locked = option.mode !== 'SAFE' && !assetVerified;
+              const locked = !assetVerified;
               return (
                 <button
                   className={`${styles.modeCard} ${mode === option.mode ? styles.modeActive : ''} ${locked ? styles.modeLocked : ''}`}
@@ -158,7 +158,7 @@ function ScansView() {
 
           {modeLocked && (
             <p className={styles.lockNotice}>
-              {selectedAsset?.value} is not verified yet. <Link href="/assets">Complete DNS verification</Link> to unlock {mode.toLowerCase()} mode.
+              {selectedAsset?.value} is not verified yet. <Link href="/assets">Complete verification</Link> before starting a scan.
             </p>
           )}
         </section>

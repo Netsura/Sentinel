@@ -16,7 +16,7 @@ export class MailService {
 
   async send(message: MailMessage) {
     if (!this.transport) {
-      this.logger.log(JSON.stringify({ level: 'info', message: 'mail.logged', to: message.to, subject: message.subject, text: message.text }));
+      this.logger.log(JSON.stringify({ level: 'info', message: 'mail.logged', to: message.to, subject: message.subject }));
       return { delivered: false, logged: true };
     }
 

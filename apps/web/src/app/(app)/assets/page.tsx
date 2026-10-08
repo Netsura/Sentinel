@@ -61,7 +61,7 @@ export default function AssetsPage() {
       setAssets((current) => current.map((item) => (item.id === asset.id ? { ...item, verificationStatus: result.verificationStatus } : item)));
       setNotice(
         result.verificationStatus === 'VERIFIED'
-          ? `${asset.value} is verified and ready for active scans.`
+          ? `${asset.value} is verified and ready to scan.`
           : `Verification failed for ${asset.value}. DNS changes can take a few minutes to propagate.`,
       );
     } catch (requestError) {
@@ -78,7 +78,7 @@ export default function AssetsPage() {
       <PageHeader
         eyebrow="SCOPE"
         title="Assets"
-        subtitle="Sentinel only scans targets you have proven you control. Domains require a DNS record before active scan modes unlock."
+        subtitle="Sentinel only scans targets you have proven you control. Domains need a DNS record; IP assets need an owner attestation."
       />
 
       <form className={styles.addPanel} onSubmit={addAsset}>

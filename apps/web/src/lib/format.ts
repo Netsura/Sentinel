@@ -26,8 +26,8 @@ export function formatDateLabel(value = new Date()) {
 export const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'] as const;
 
 export const SCAN_MODES = [
-  { mode: 'SAFE', label: 'Safe', detail: 'Passive DNS, TLS, and header review. No crawling.' },
-  { mode: 'NORMAL', label: 'Normal', detail: 'Adds a bounded crawl, endpoint discovery, and common artifact probes.' },
+  { mode: 'SAFE', label: 'Safe', detail: 'Passive DNS, TLS, and header review. No crawling. Requires a verified asset.' },
+  { mode: 'NORMAL', label: 'Normal', detail: 'Adds a bounded crawl, endpoint discovery, and common artifact probes. Requires a verified asset.' },
   { mode: 'AGGRESSIVE', label: 'Aggressive', detail: 'Adds deep crawling, extended probes, and subdomain enumeration. Requires a verified asset.' },
 ] as const;
 

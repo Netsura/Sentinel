@@ -1,7 +1,7 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   apiRequest,
   clearSession,
@@ -36,49 +36,50 @@ export function useAuth() {
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname();
+  const booted = useRef(false);
   const [ready, setReady] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(getStoredUser());
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspace, setWorkspaceState] = useState<Workspace | null>(null);
 
-  const boot = useCallback(async () => {
-    await ensureCsrfToken();
-    if (!getAccessToken()) {
-      const restored = getRefreshToken() ? await refreshSession() : false;
-      if (!restored) {
-        const next = encodeURIComponent(pathname || '/');
-        router.replace(`/login?next=${next}`);
-        return;
-      }
-    }
-
-    try {
-      const currentUser = await fetchCurrentUser();
-      setUser(currentUser);
-      let list = await apiRequest<Workspace[]>('/workspaces');
-      if (list.length === 0) {
-        const created = await apiRequest<Workspace>('/workspaces', {
-          method: 'POST',
-          body: JSON.stringify({ name: 'Personal workspace' }),
-        });
-        list = [created];
-      }
-      const savedId = getWorkspaceId();
-      const current = list.find((item) => item.id === savedId) ?? list[0];
-      persistWorkspace(current);
-      setWorkspaces(list);
-      setWorkspaceState(current);
-      setReady(true);
-    } catch {
-      clearSession();
-      router.replace('/login');
-    }
-  }, [pathname, router]);
-
   useEffect(() => {
-    void boot();
-  }, [boot]);
+    if (booted.current) return;
+    booted.current = true;
+
+    void (async () => {
+      await ensureCsrfToken();
+      if (!getAccessToken()) {
+        const restored = getRefreshToken() ? await refreshSession() : false;
+        if (!restored) {
+          const next = encodeURIComponent(window.location.pathname || '/');
+          router.replace(`/login?next=${next}`);
+          return;
+        }
+      }
+
+      try {
+        const currentUser = await fetchCurrentUser();
+        setUser(currentUser);
+        let list = await apiRequest<Workspace[]>('/workspaces');
+        if (list.length === 0) {
+          const created = await apiRequest<Workspace>('/workspaces', {
+            method: 'POST',
+            body: JSON.stringify({ name: 'Personal workspace' }),
+          });
+          list = [created];
+        }
+        const savedId = getWorkspaceId();
+        const current = list.find((item) => item.id === savedId) ?? list[0];
+        persistWorkspace(current);
+        setWorkspaces(list);
+        setWorkspaceState(current);
+        setReady(true);
+      } catch {
+        clearSession();
+        router.replace('/login');
+      }
+    })();
+  }, [router]);
 
   const setWorkspace = useCallback((next: Workspace) => {
     persistWorkspace(next);

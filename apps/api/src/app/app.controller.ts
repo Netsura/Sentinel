@@ -1,4 +1,6 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
+import Redis from 'ioredis';
 import { AppService } from './app.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { MetricsService } from '../metrics/metrics.service';
@@ -12,15 +14,32 @@ export class AppController {
     return this.appService.getData();
   }
 
+  @SkipThrottle()
   @Get('health')
   health() {
     return { status: 'ok', service: 'sentinel-api' };
   }
 
+  @SkipThrottle()
   @Get('ready')
   async ready() {
     await this.prisma.$queryRaw`SELECT 1`;
-    return { status: 'ready', service: 'sentinel-api', database: 'ok' };
+    const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
+      maxRetriesPerRequest: 1,
+      connectTimeout: 3_000,
+      lazyConnect: true,
+      enableOfflineQueue: false,
+    });
+    try {
+      await redis.connect();
+      const pong = await redis.ping();
+      if (pong !== 'PONG') throw new Error('unexpected redis ping');
+    } catch {
+      throw new ServiceUnavailableException({ status: 'not-ready', service: 'sentinel-api', database: 'ok', redis: 'unavailable' });
+    } finally {
+      redis.disconnect();
+    }
+    return { status: 'ready', service: 'sentinel-api', database: 'ok', redis: 'ok' };
   }
 
   @Get('metrics')
