@@ -1,9 +1,10 @@
 import { createServer } from 'node:http';
 import { NotificationType, PrismaClient, ScanStatus } from '@prisma/client';
-import { Job, Worker } from 'bullmq';
+import { Job, UnrecoverableError, Worker } from 'bullmq';
+import { TargetChangedError, UnroutableTargetError } from './lib/net';
 import { createBullmqConnection } from './lib/redis';
 import { resolveScanJob, ScheduledJobData } from './scan-jobs';
-import { ScanCancelledError, ScanJobData, ScanRunner } from './scan-runner';
+import { ScanCancelledError, ScanDeadlineError, ScanJobData, ScanRunner } from './scan-runner';
 
 const port = Number(process.env.PORT || 10000);
 const healthServer = createServer((_req, res) => {
@@ -29,7 +30,20 @@ const worker = new Worker<ScanJobData | ScheduledJobData>(
       return { skipped: true };
     }
 
-    const result = await runner.run(data);
+    let result;
+    try {
+      result = await runner.run(data);
+    } catch (error) {
+      if (
+        error instanceof ScanCancelledError ||
+        error instanceof ScanDeadlineError ||
+        error instanceof TargetChangedError ||
+        error instanceof UnroutableTargetError
+      ) {
+        throw new UnrecoverableError(error.message);
+      }
+      throw error;
+    }
     console.log(
       JSON.stringify({
         level: 'info',
@@ -47,7 +61,7 @@ const worker = new Worker<ScanJobData | ScheduledJobData>(
   {
     connection: workerRedis,
     concurrency: Number(process.env.SCANNER_CONCURRENCY ?? 2),
-    lockDuration: 120_000,
+    lockDuration: 900_000,
     stalledInterval: 30_000,
   },
 );
@@ -64,7 +78,8 @@ worker.on('error', (error) => console.error(`[BULLMQ] Worker error ${error.messa
 worker.on('failed', async (job, error) => {
   if (!job) return;
 
-  const cancelled = error instanceof ScanCancelledError || error?.name === 'ScanCancelledError';
+  const cancelled = error instanceof ScanCancelledError || error?.name === 'ScanCancelledError' || error?.message === 'Scan was cancelled';
+  const unrecoverable = error instanceof UnrecoverableError || error?.name === 'UnrecoverableError';
   const attemptsExhausted = (job.attemptsMade ?? 0) >= (job.opts.attempts ?? 1);
   const scanId = (job.data as ScanJobData).scanId;
 
@@ -79,7 +94,8 @@ worker.on('failed', async (job, error) => {
     }),
   );
 
-  if (cancelled || !attemptsExhausted || !scanId) return;
+  if (cancelled || !scanId) return;
+  if (!attemptsExhausted && !unrecoverable) return;
 
   const scan = await prisma.scan
     .updateMany({

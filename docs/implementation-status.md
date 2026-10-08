@@ -31,12 +31,10 @@ Sentinel is a working SaaS foundation: authenticated workspaces, live scanning, 
 
 ## Remaining work
 
-- `FINDING_RESOLVED` notifications (enum exists; nothing emits it yet)
 - DNS/TLS/HTTP historical result storage beyond finding-level scan diffs
 - Notification email, Slack, Discord, and webhook adapters
 - S3-compatible report storage and signed download URLs
 - Integration tests that exercise Redis, BullMQ, and a completed scanner job
 - Playwright coverage for a verified asset through scan completion
-- Production network egress policy for the scanner
-- Structured logging, cloud deployment hardening, and HTTPS cookie/session handling
+- HttpOnly cookie sessions (access tokens still live in sessionStorage)
 - AI explanations grounded in deterministic finding evidence

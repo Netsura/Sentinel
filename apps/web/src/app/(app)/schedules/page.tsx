@@ -79,11 +79,11 @@ export default function SchedulesPage() {
   }
 
   const selectedAsset = assets.find((asset) => asset.id === assetId);
-  const locked = mode !== 'SAFE' && selectedAsset?.verificationStatus !== 'VERIFIED';
+  const locked = selectedAsset?.verificationStatus !== 'VERIFIED';
 
   return (
     <>
-      <PageHeader eyebrow="AUTOMATION" title="Scheduled scans" subtitle="Recurring posture checks. Active modes require a verified asset, the same as manual scans." />
+      <PageHeader eyebrow="AUTOMATION" title="Scheduled scans" subtitle="Recurring posture checks. Every mode requires a verified asset, the same as manual scans." />
 
       {assets.length === 0 ? (
         <p className={styles.empty}>
@@ -127,7 +127,7 @@ export default function SchedulesPage() {
 
       {locked && assets.length > 0 && (
         <p className={styles.lockNotice}>
-          {selectedAsset?.value} is not verified. <Link href="/assets">Verify it</Link> to schedule {mode.toLowerCase()} scans.
+          {selectedAsset?.value} is not verified. <Link href="/assets">Verify it</Link> before scheduling scans.
         </p>
       )}
 

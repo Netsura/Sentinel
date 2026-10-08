@@ -31,6 +31,7 @@ jobs:
       JWT_REFRESH_SECRET: ci-refresh-secret
       WEB_ORIGIN: http://localhost:3000
       NEXT_PUBLIC_API_URL: http://localhost:3001/api
+      ADMIN_EMAILS: ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -40,6 +41,7 @@ jobs:
       - run: npm ci
       - run: npm run db:generate
       - run: npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
+      - run: npx nx run-many -t lint --projects=api,scanner,web --outputStyle=static
       - run: npx nx run-many -t build test --projects=api,scanner,web --outputStyle=static
       - run: npx playwright install --with-deps chromium
       - run: npx nx e2e web-e2e --outputStyle=static

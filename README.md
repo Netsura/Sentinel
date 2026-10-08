@@ -11,7 +11,7 @@ Sentinel is a security monitoring and vulnerability assessment platform for auth
 - Workspace-scoped assets with DNS TXT verification and public-target validation
 - Isolated scanner worker with SAFE/NORMAL/AGGRESSIVE profiles (DNS, TLS, HTTP, crawler, discovery)
 - Stripe checkout, webhooks, and workspace billing reconcile
-- Swagger/OpenAPI documentation at `/api/docs`
+- Swagger/OpenAPI documentation at `/api/docs` (disabled in production unless `ENABLE_SWAGGER=true`)
 - GitHub Actions validation with PostgreSQL, Redis, migrations, builds, tests, Playwright, and audit checks
 - Production Compose stack: web, API, scanner, Postgres, Redis, and Nginx
 
@@ -43,6 +43,12 @@ In another terminal, run the API:
 
 ```sh
 npm run dev:api
+```
+
+In a third terminal, run the scanner worker:
+
+```sh
+npm run dev:scanner
 ```
 
 The dashboard runs at `http://localhost:3000`. The API health endpoint is `http://localhost:3001/api/health`.

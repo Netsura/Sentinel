@@ -1,4 +1,5 @@
 import { Controller, Get, Headers, Post, RawBodyRequest, Req, UseGuards } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -33,6 +34,7 @@ export class BillingController {
     return this.billing.reconcile(user, workspaceId);
   }
 
+  @SkipThrottle()
   @Post('webhook')
   webhook(@Req() req: RawBodyRequest<Request>, @Headers('stripe-signature') signature?: string) {
     if (!req.rawBody) throw new Error('Raw body is required for Stripe signature verification');

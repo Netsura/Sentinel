@@ -6,11 +6,12 @@ import { AppModule } from '../app/app.module';
 import { csrfProtection } from './csrf';
 import { PrismaService } from '../prisma/prisma.service';
 
-const describeIntegration = process.env.DATABASE_URL ? describe : describe.skip;
+const localDatabase = /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL ?? '');
+const describeIntegration = localDatabase ? describe : describe.skip;
 
 describeIntegration('auth and CSRF integration', () => {
-  let app: INestApplication;
-  let prisma: PrismaService;
+  let app: INestApplication | undefined;
+  let prisma: PrismaService | undefined;
   const email = `csrf-${Date.now()}@sentinel.test`;
 
   beforeAll(async () => {
@@ -24,11 +25,11 @@ describeIntegration('auth and CSRF integration', () => {
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
     await app.init();
     prisma = app.get(PrismaService);
-  });
+  }, 30_000);
 
   afterAll(async () => {
-    await prisma.user.deleteMany({ where: { email } }).catch(() => undefined);
-    await app.close();
+    await prisma?.user.deleteMany({ where: { email } }).catch(() => undefined);
+    await app?.close().catch(() => undefined);
   });
 
   it('rejects login without a CSRF token and accepts the same request after issuing one', async () => {

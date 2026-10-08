@@ -119,7 +119,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </aside>
 
-        <section className={styles.content}>{children}</section>
+        <section className={styles.content} key={workspace.id}>{children}</section>
       </div>
     </NotificationContext.Provider>
   );

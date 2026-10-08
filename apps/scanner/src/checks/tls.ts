@@ -14,15 +14,15 @@ type Handshake = {
   authorizationError: string | null;
 };
 
-function connect(hostname: string, options: tls.ConnectionOptions, timeoutMs: number) {
+function connect(connectHost: string, sniHost: string, options: tls.ConnectionOptions, timeoutMs: number) {
   return new Promise<Handshake>((resolve, reject) => {
     let settled = false;
     const socket = tls.connect(
       {
-        host: hostname,
+        host: connectHost,
         port: 443,
         // SNI must be omitted for IP literals; sending one is invalid.
-        ...(isIpLiteral(hostname) ? {} : { servername: hostname }),
+        ...(isIpLiteral(sniHost) ? {} : { servername: sniHost }),
         timeout: timeoutMs,
         ...options,
       },
@@ -50,10 +50,10 @@ function connect(hostname: string, options: tls.ConnectionOptions, timeoutMs: nu
   });
 }
 
-export async function tlsFindings(hostname: string, timeoutMs: number, probeLegacyProtocols: boolean): Promise<FindingInput[]> {
+export async function tlsFindings(hostname: string, connectHost: string, timeoutMs: number, probeLegacyProtocols: boolean): Promise<FindingInput[]> {
   let handshake: Handshake;
   try {
-    handshake = await connect(hostname, { rejectUnauthorized: false }, timeoutMs);
+    handshake = await connect(connectHost, hostname, { rejectUnauthorized: false }, timeoutMs);
   } catch (error) {
     return [
       {
@@ -74,7 +74,7 @@ export async function tlsFindings(hostname: string, timeoutMs: number, probeLega
   findings.push(...certificateFindings(hostname, certificate, authorizationError));
   findings.push(...protocolFindings(protocol, cipher));
 
-  if (probeLegacyProtocols) findings.push(...(await legacyProtocolFindings(hostname, timeoutMs)));
+  if (probeLegacyProtocols) findings.push(...(await legacyProtocolFindings(hostname, connectHost, timeoutMs)));
 
   return findings;
 }
@@ -205,12 +205,12 @@ function protocolFindings(protocol: string | null, cipher: tls.CipherNameAndProt
   return findings;
 }
 
-async function legacyProtocolFindings(hostname: string, timeoutMs: number): Promise<FindingInput[]> {
+async function legacyProtocolFindings(hostname: string, connectHost: string, timeoutMs: number): Promise<FindingInput[]> {
   const supported: string[] = [];
 
   for (const protocol of LEGACY_PROTOCOLS) {
     try {
-      const result = await connect(hostname, { rejectUnauthorized: false, minVersion: protocol, maxVersion: protocol }, timeoutMs);
+      const result = await connect(connectHost, hostname, { rejectUnauthorized: false, minVersion: protocol, maxVersion: protocol }, timeoutMs);
       if (result.protocol === protocol) supported.push(protocol);
     } catch {
       // A refused handshake is the desired outcome: the legacy version is disabled.

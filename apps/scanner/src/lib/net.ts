@@ -1,16 +1,21 @@
+import http from 'node:http';
+import https from 'node:https';
 import { promises as dns } from 'node:dns';
+import type { IncomingHttpHeaders, IncomingMessage } from 'node:http';
 
 export const SCANNER_USER_AGENT = 'Sentinel-Scanner/1.0 (authorized security assessment)';
 
 const TEXTUAL_CONTENT = /(text\/|application\/(json|javascript|xml|xhtml|x-javascript)|\+json|\+xml)/i;
 
 export class TargetChangedError extends Error {
+  readonly name = 'TargetChangedError';
   constructor() {
     super('Target DNS changed during the scan; refusing further requests');
   }
 }
 
 export class UnroutableTargetError extends Error {
+  readonly name = 'UnroutableTargetError';
   constructor(hostname: string) {
     super(`Resolved target is not publicly routable: ${hostname}`);
   }
@@ -67,6 +72,12 @@ export async function resolvePublicAddresses(hostname: string, timeoutMs = 8_000
   return addresses;
 }
 
+export function pinnedConnectAddress(addresses: string[]) {
+  const publicAddresses = addresses.filter((address) => !isPrivateAddress(address));
+  if (!publicAddresses.length) throw new UnroutableTargetError('none');
+  return publicAddresses[0];
+}
+
 export type SafeResponse = {
   url: string;
   path: string;
@@ -84,6 +95,7 @@ export type SafeHttpOptions = {
   minIntervalMs: number;
   timeoutMs: number;
   maxBodyBytes: number;
+  signal?: AbortSignal;
 };
 
 export type SafeRequestInit = {
@@ -92,23 +104,49 @@ export type SafeRequestInit = {
   readBody?: boolean;
 };
 
+function hostHeader(hostname: string) {
+  return hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname;
+}
+
+function toFetchHeaders(raw: IncomingHttpHeaders) {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(raw)) {
+    if (value === undefined) continue;
+    if (key.toLowerCase() === 'set-cookie') {
+      const cookies = Array.isArray(value) ? value : [value];
+      for (const cookie of cookies) headers.append('set-cookie', cookie);
+      continue;
+    }
+    headers.set(key, Array.isArray(value) ? value.join(', ') : value);
+  }
+  return headers;
+}
+
+function isDeadlineError(error: unknown) {
+  return error instanceof Error && (error.name === 'ScanDeadlineError' || error.message === 'Scan deadline exceeded');
+}
+
 /**
  * Every outbound request funnels through this client so a single scan cannot
  * exceed its request budget, outpace its rate limit, or follow a redirect onto
- * a host the operator never authorized. Addresses are re-resolved before each
- * request and compared against the set captured at scan start, which closes the
- * DNS-rebinding window between the initial authorization check and the request.
+ * a host the operator never authorized. TCP connects to a pinned public IP with
+ * the original hostname used only for Host/SNI, which closes DNS rebinding
+ * between authorization and connect. Addresses are re-resolved before and
+ * after each request and compared against the set captured at scan start.
  */
 export class SafeHttpClient {
   private requestsUsed = 0;
   private lastRequestAt = 0;
   private budgetExhaustedReported = false;
+  private readonly connectIp: string;
 
   constructor(
     private readonly hostname: string,
     private readonly pinnedAddresses: string[],
     private readonly options: SafeHttpOptions,
-  ) {}
+  ) {
+    this.connectIp = pinnedConnectAddress(pinnedAddresses);
+  }
 
   get used() {
     return this.requestsUsed;
@@ -122,8 +160,13 @@ export class SafeHttpClient {
     return this.remaining === 0;
   }
 
+  get pinnedIp() {
+    return this.connectIp;
+  }
+
   /** Returns null when the request budget is spent or the target refuses the request. */
   async request(path: string, init: SafeRequestInit = {}): Promise<SafeResponse | null> {
+    this.assertNotAborted();
     if (this.exhausted) {
       if (!this.budgetExhaustedReported) this.budgetExhaustedReported = true;
       return null;
@@ -138,53 +181,103 @@ export class SafeHttpClient {
     this.requestsUsed += 1;
     this.lastRequestAt = Date.now();
 
-    let response: Response;
+    let response: SafeResponse;
     try {
-      response = await fetch(url, {
-        method,
-        redirect: 'manual',
-        signal: AbortSignal.timeout(this.options.timeoutMs),
-        headers: { 'User-Agent': SCANNER_USER_AGENT, Accept: '*/*' },
-      });
-    } catch {
+      response = await this.dispatch(url, path.startsWith('/') ? path : `/${path}`, method, scheme, init.readBody ?? true);
+    } catch (error) {
+      if (error instanceof TargetChangedError || isDeadlineError(error)) throw error;
       return null;
     }
 
-    const contentType = response.headers.get('content-type') ?? '';
-    const shouldRead = (init.readBody ?? true) && method !== 'HEAD' && TEXTUAL_CONTENT.test(contentType);
-    const { body, truncated, bytes } = shouldRead
-      ? await this.readCappedBody(response)
-      : { body: '', truncated: false, bytes: Number(response.headers.get('content-length') ?? 0) };
-
-    if (!shouldRead) await response.body?.cancel().catch(() => undefined);
-
-    return { url, path, method, status: response.status, headers: response.headers, body, bodyTruncated: truncated, contentType, contentLength: bytes };
+    await this.assertTargetUnchanged();
+    return response;
   }
 
-  private async readCappedBody(response: Response) {
-    if (!response.body) return { body: '', truncated: false, bytes: 0 };
+  private dispatch(url: string, path: string, method: string, scheme: 'http' | 'https', readBody: boolean) {
+    this.assertNotAborted();
+    const lib = scheme === 'https' ? https : http;
+    const headers: http.OutgoingHttpHeaders = {
+      Host: hostHeader(this.hostname),
+      'User-Agent': SCANNER_USER_AGENT,
+      Accept: '*/*',
+    };
 
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
+    return new Promise<SafeResponse>((resolve, reject) => {
+      const req = lib.request(
+        {
+          host: this.connectIp,
+          family: this.connectIp.includes(':') ? 6 : 4,
+          port: scheme === 'https' ? 443 : 80,
+          method,
+          path,
+          setHost: false,
+          timeout: this.options.timeoutMs,
+          headers,
+          ...(scheme === 'https'
+            ? {
+                servername: isIpLiteral(this.hostname) ? undefined : this.hostname,
+                rejectUnauthorized: true,
+              }
+            : {}),
+        },
+        async (res) => {
+          try {
+            const contentType = typeof res.headers['content-type'] === 'string' ? res.headers['content-type'] : '';
+            const shouldRead = readBody && method !== 'HEAD' && TEXTUAL_CONTENT.test(contentType);
+            const { body, truncated, bytes } = shouldRead
+              ? await this.readCappedBody(res)
+              : { body: '', truncated: false, bytes: Number(res.headers['content-length'] ?? 0) };
+            if (!shouldRead) res.resume();
+            resolve({
+              url,
+              path,
+              method,
+              status: res.statusCode ?? 0,
+              headers: toFetchHeaders(res.headers),
+              body,
+              bodyTruncated: truncated,
+              contentType,
+              contentLength: bytes,
+            });
+          } catch (error) {
+            reject(error);
+          }
+        },
+      );
+
+      const onAbort = () => {
+        req.destroy();
+        reject(Object.assign(new Error('Scan deadline exceeded'), { name: 'ScanDeadlineError' }));
+      };
+      this.options.signal?.addEventListener('abort', onAbort, { once: true });
+
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error(`Request timed out after ${this.options.timeoutMs}ms`));
+      });
+      req.on('error', (error) => reject(error));
+      req.end();
+    });
+  }
+
+  private async readCappedBody(response: IncomingMessage) {
+    const chunks: Buffer[] = [];
     let bytes = 0;
     let truncated = false;
 
     try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (!value) continue;
-        chunks.push(value);
-        bytes += value.byteLength;
+      for await (const chunk of response) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        chunks.push(buf);
+        bytes += buf.byteLength;
         if (bytes >= this.options.maxBodyBytes) {
           truncated = true;
+          response.destroy();
           break;
         }
       }
     } catch {
       // A truncated or reset body is still usable evidence for the checks below.
-    } finally {
-      await reader.cancel().catch(() => undefined);
     }
 
     return { body: Buffer.concat(chunks).toString('utf8').slice(0, this.options.maxBodyBytes), truncated, bytes };
@@ -196,8 +289,17 @@ export class SafeHttpClient {
   }
 
   private async assertTargetUnchanged() {
+    this.assertNotAborted();
     const current = await resolvePublicAddresses(this.hostname);
-    if (current.join('|') !== this.pinnedAddresses.join('|')) throw new TargetChangedError();
+    if (current.join('|') !== this.pinnedAddresses.join('|') || !current.includes(this.connectIp)) {
+      throw new TargetChangedError();
+    }
+  }
+
+  private assertNotAborted() {
+    if (this.options.signal?.aborted) {
+      throw Object.assign(new Error('Scan deadline exceeded'), { name: 'ScanDeadlineError' });
+    }
   }
 }
 

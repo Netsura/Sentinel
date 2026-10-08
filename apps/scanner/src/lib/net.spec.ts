@@ -1,4 +1,4 @@
-import { isIpLiteral, isPrivateAddress, sameHost, withTimeout } from './net';
+import { isIpLiteral, isPrivateAddress, pinnedConnectAddress, sameHost, UnroutableTargetError, withTimeout } from './net';
 
 describe('isPrivateAddress', () => {
   it.each([
@@ -52,6 +52,16 @@ describe('isIpLiteral', () => {
 describe('withTimeout', () => {
   it('rejects when the promise does not settle in time', async () => {
     await expect(withTimeout(new Promise(() => undefined), 20, 'timed out')).rejects.toThrow('timed out');
+  });
+});
+
+describe('pinnedConnectAddress', () => {
+  it('selects the first public address for TCP pinning', () => {
+    expect(pinnedConnectAddress(['8.8.8.8', '1.1.1.1'])).toBe('8.8.8.8');
+  });
+
+  it('refuses a pin set that is not publicly routable', () => {
+    expect(() => pinnedConnectAddress(['10.0.0.1'])).toThrow(UnroutableTargetError);
   });
 });
 

@@ -16,6 +16,7 @@ export type DiscoveryProfile = {
 
 export type ScanProfile = {
   http: SafeHttpOptions;
+  deadlineMs: number;
   crawl: CrawlProfile | null;
   discovery: DiscoveryProfile | null;
   probeLegacyTls: boolean;
@@ -30,6 +31,7 @@ export type ScanProfile = {
 export const SCAN_PROFILES: Record<ScanMode, ScanProfile> = {
   SAFE: {
     http: { requestBudget: 12, minIntervalMs: 400, timeoutMs: 10_000, maxBodyBytes: 256_000 },
+    deadlineMs: 90_000,
     crawl: null,
     discovery: null,
     probeLegacyTls: false,
@@ -37,6 +39,7 @@ export const SCAN_PROFILES: Record<ScanMode, ScanProfile> = {
   },
   NORMAL: {
     http: { requestBudget: 90, minIntervalMs: 250, timeoutMs: 10_000, maxBodyBytes: 512_000 },
+    deadlineMs: 180_000,
     crawl: { maxPages: 25, maxDepth: 2, maxScripts: 8, respectRobots: true },
     discovery: { tier: 'common', probeMethods: true, probeDisallowedPaths: false },
     probeLegacyTls: true,
@@ -44,6 +47,7 @@ export const SCAN_PROFILES: Record<ScanMode, ScanProfile> = {
   },
   AGGRESSIVE: {
     http: { requestBudget: 400, minIntervalMs: 120, timeoutMs: 12_000, maxBodyBytes: 1_000_000 },
+    deadlineMs: 600_000,
     crawl: { maxPages: 120, maxDepth: 4, maxScripts: 25, respectRobots: true },
     discovery: { tier: 'extended', probeMethods: true, probeDisallowedPaths: true },
     probeLegacyTls: true,

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { AssetType, VerificationStatus, WorkspaceRole } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 import { promises as dns } from 'node:dns';
@@ -15,12 +15,21 @@ export class AssetsService {
   constructor(private readonly prisma: PrismaService, private readonly workspaces: WorkspacesService) {}
 
   async list(user: AuthUser, workspaceId: string) {
-    await this.workspaces.requireMembership(user, workspaceId);
-    return this.prisma.asset.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    const membership = await this.workspaces.requireMembership(user, workspaceId);
+    const assets = await this.prisma.asset.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' } });
+    if (membership.role === WorkspaceRole.VIEWER && !isPlatformAdmin(user.email)) {
+      return assets.map((asset) => {
+        const { verificationToken: _token, ...rest } = asset;
+        void _token;
+        return rest;
+      });
+    }
+    return assets;
   }
 
   async create(user: AuthUser, workspaceId: string, dto: CreateAssetDto) {
-    await this.workspaces.requireMembership(user, workspaceId, WorkspaceRole.ANALYST);
+    const minimumRole = dto.type === AssetType.IP && !isPlatformAdmin(user.email) ? WorkspaceRole.OWNER : WorkspaceRole.ANALYST;
+    await this.workspaces.requireMembership(user, workspaceId, minimumRole);
     const value = normalizeAssetTarget(dto.type, dto.value);
     const verified = isPlatformAdmin(user.email);
     return withAudit(this.prisma, { workspaceId, userId: user.id, action: 'ASSET_CREATED', resource: 'Asset', metadata: { type: dto.type, value, verified } }, (tx) =>
@@ -37,12 +46,18 @@ export class AssetsService {
   }
 
   async verify(user: AuthUser, workspaceId: string, assetId: string) {
-    await this.workspaces.requireMembership(user, workspaceId, WorkspaceRole.ANALYST);
+    const membership = await this.workspaces.requireMembership(user, workspaceId, WorkspaceRole.ANALYST);
     const asset = await this.prisma.asset.findFirst({ where: { id: assetId, workspaceId } });
     if (!asset) throw new NotFoundException('Asset not found');
-    const nextStatus = isPlatformAdmin(user.email) || asset.type === AssetType.IP
-      ? VerificationStatus.VERIFIED
-      : await this.lookupDnsStatus(asset.value, asset.verificationToken);
+    let nextStatus: VerificationStatus;
+    if (isPlatformAdmin(user.email)) {
+      nextStatus = VerificationStatus.VERIFIED;
+    } else if (asset.type === AssetType.IP) {
+      if (membership.role !== WorkspaceRole.OWNER) throw new ForbiddenException('Only a workspace owner can attest IP ownership');
+      nextStatus = VerificationStatus.VERIFIED;
+    } else {
+      nextStatus = await this.lookupDnsStatus(asset.value, asset.verificationToken);
+    }
 
     return withAudit(this.prisma, { workspaceId, userId: user.id, action: 'ASSET_VERIFIED', resource: 'Asset', resourceId: asset.id, metadata: { from: asset.verificationStatus, to: nextStatus } }, (tx) =>
       tx.asset.update({ where: { id: asset.id }, data: { verificationStatus: nextStatus }, select: { id: true, verificationStatus: true, value: true } }),

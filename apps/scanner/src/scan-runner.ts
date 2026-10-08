@@ -1,4 +1,4 @@
-import { AssetType, Confidence, NotificationType, PrismaClient, ScanMode, ScanStatus, Severity } from '@prisma/client';
+import { AssetType, Confidence, FindingStatus, NotificationType, PrismaClient, ScanMode, ScanStatus, Severity } from '@prisma/client';
 import type Redis from 'ioredis';
 import { crawl } from './checks/crawler';
 import { discoveryFindings } from './checks/discovery';
@@ -6,8 +6,8 @@ import { dnsFindings } from './checks/dns';
 import { fetchLandingPage, httpFindings } from './checks/http';
 import { subdomainFindings } from './checks/subdomains';
 import { tlsFindings } from './checks/tls';
-import { dedupeFindings, FindingInput, scoreFindings } from './lib/findings';
-import { isIpLiteral, resolvePublicAddresses, SafeHttpClient, withTimeout } from './lib/net';
+import { carriedFindingStatus, dedupeFindings, findingIdentity, FindingInput, scoreFindings } from './lib/findings';
+import { isIpLiteral, pinnedConnectAddress, resolvePublicAddresses, SafeHttpClient, withTimeout } from './lib/net';
 import { SCAN_PROFILES, Stage, stageProgress } from './lib/profiles';
 
 export type ScanJobData = { scanId: string; workspaceId: string; assetId: string; mode: ScanMode };
@@ -19,9 +19,19 @@ export class ScanCancelledError extends Error {
   }
 }
 
+export class ScanDeadlineError extends Error {
+  readonly name = 'ScanDeadlineError';
+  constructor() {
+    super('Scan deadline exceeded');
+  }
+}
+
 const SCORE_DROP_THRESHOLD = 10;
 
 export class ScanRunner {
+  private deadline?: AbortSignal;
+  private workspaceId?: string;
+
   constructor(private readonly prisma: PrismaClient, private readonly publisher: Redis) {}
 
   async run(data: ScanJobData) {
@@ -37,12 +47,15 @@ export class ScanRunner {
     const profile = SCAN_PROFILES[mode];
     const hostname = scan.asset.value;
     const isIp = scan.asset.type === AssetType.IP || isIpLiteral(hostname);
+    this.workspaceId = scan.workspaceId;
+    this.deadline = AbortSignal.timeout(profile.deadlineMs);
 
     await this.begin(scanId, scan.startedAt);
     await this.stage(scanId, mode, 'INITIALIZING');
 
     const addresses = await resolvePublicAddresses(hostname);
-    const client = new SafeHttpClient(hostname, addresses, profile.http);
+    const connectHost = pinnedConnectAddress(addresses);
+    const client = new SafeHttpClient(hostname, addresses, { ...profile.http, signal: this.deadline });
     const findings: FindingInput[] = [];
 
     await this.stage(scanId, mode, 'DNS');
@@ -50,7 +63,7 @@ export class ScanRunner {
 
     await this.guardCancellation(scanId);
     await this.stage(scanId, mode, 'TLS');
-    findings.push(...(await tlsFindings(hostname, profile.http.timeoutMs, profile.probeLegacyTls)));
+    findings.push(...(await tlsFindings(hostname, connectHost, profile.http.timeoutMs, profile.probeLegacyTls)));
 
     await this.guardCancellation(scanId);
     await this.stage(scanId, mode, 'HTTP');
@@ -95,8 +108,8 @@ export class ScanRunner {
 
     const deduped = dedupeFindings(findings);
     const score = scoreFindings(deduped);
-    await this.persist(scan.workspaceId, scan.assetId, scanId, deduped);
-    await this.complete(scanId, score, deduped, client.used);
+    const resolvedCount = await this.persist(scan.workspaceId, scan.assetId, scanId, deduped);
+    await this.complete(scanId, score, deduped, client.used, resolvedCount);
 
     return { score, findings: deduped.length, requests: client.used, skipped: false };
   }
@@ -125,7 +138,7 @@ export class ScanRunner {
         await withTimeout(this.publisher.connect(), 2_000, 'Redis publish connect timed out');
       }
       await withTimeout(
-        this.publisher.publish('scan.progress', JSON.stringify({ scanId, stage, progress })),
+        this.publisher.publish('scan.progress', JSON.stringify({ scanId, workspaceId: this.workspaceId, stage, progress })),
         2_000,
         'Redis publish timed out',
       );
@@ -136,21 +149,65 @@ export class ScanRunner {
 
   /** Cancellation removes the queue job, but a scan already in flight has to notice on its own. */
   private async guardCancellation(scanId: string) {
+    if (this.deadline?.aborted) throw new ScanDeadlineError();
     const scan = await this.prisma.scan.findUnique({ where: { id: scanId }, select: { status: true } });
     if (scan?.status === ScanStatus.CANCELLED) throw new ScanCancelledError();
   }
 
   private async persist(workspaceId: string, assetId: string, scanId: string, findings: FindingInput[]) {
+    const now = new Date();
+    const newKeys = new Set(findings.map(findingIdentity));
+    const history = await this.prisma.finding.findMany({
+      where: { assetId },
+      select: { scanId: true, category: true, title: true, status: true, firstDetectedAt: true },
+      orderBy: { lastDetectedAt: 'desc' },
+    });
+    const latestByKey = new Map<string, (typeof history)[number]>();
+    for (const row of history) {
+      const key = findingIdentity(row);
+      if (!latestByKey.has(key)) latestByKey.set(key, row);
+    }
+    const resolvedKeys = new Set<string>();
+    for (const row of history) {
+      const key = findingIdentity(row);
+      if (row.scanId === scanId) continue;
+      if (row.status !== FindingStatus.OPEN && row.status !== FindingStatus.ACKNOWLEDGED) continue;
+      if (newKeys.has(key)) continue;
+      resolvedKeys.add(key);
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.finding.deleteMany({ where: { scanId } });
-      if (!findings.length) return;
-      await tx.finding.createMany({
-        data: findings.map((finding) => ({ ...finding, scanId, workspaceId, assetId })),
+      if (findings.length) {
+        await tx.finding.createMany({
+          data: findings.map((finding) => {
+            const prior = latestByKey.get(findingIdentity(finding));
+            return {
+              ...finding,
+              scanId,
+              workspaceId,
+              assetId,
+              status: carriedFindingStatus(prior?.status),
+              firstDetectedAt: prior?.firstDetectedAt ?? now,
+              lastDetectedAt: now,
+            };
+          }),
+        });
+      }
+      await tx.finding.updateMany({
+        where: {
+          assetId,
+          scanId: { not: scanId },
+          status: { in: [FindingStatus.OPEN, FindingStatus.ACKNOWLEDGED] },
+        },
+        data: { status: FindingStatus.RESOLVED, resolvedAt: now },
       });
     });
+
+    return resolvedKeys.size;
   }
 
-  private async complete(scanId: string, score: number, findings: FindingInput[], requests: number) {
+  private async complete(scanId: string, score: number, findings: FindingInput[], requests: number, resolvedCount: number) {
     const claimed = await this.prisma.scan.updateMany({
       where: { id: scanId, status: { notIn: [ScanStatus.COMPLETED, ScanStatus.CANCELLED, ScanStatus.FAILED] } },
       data: { status: ScanStatus.COMPLETED, stage: 'COMPLETED', progress: 100, score, completedAt: new Date() },
@@ -192,6 +249,14 @@ export class ScanRunner {
           type: NotificationType.SCORE_DROP,
           title: `Security score dropped on ${scan.asset.value}`,
           message: `The score fell from ${previousScore} to ${score} since the previous scan.`,
+        });
+      }
+
+      if (resolvedCount > 0) {
+        notifications.push({
+          type: NotificationType.FINDING_RESOLVED,
+          title: `${resolvedCount} finding(s) resolved on ${scan.asset.value}`,
+          message: `The latest scan no longer detected ${resolvedCount} previously open finding(s).`,
         });
       }
 

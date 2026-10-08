@@ -20,6 +20,7 @@ services:
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       SMTP_URL: ${SMTP_URL:-}
       MAIL_FROM: ${MAIL_FROM:-Sentinel <noreply@localhost>}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}

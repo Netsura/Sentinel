@@ -63,12 +63,17 @@ export function setWorkspace(workspace: Pick<Workspace, 'id' | 'name'>) {
   sessionStorage.setItem(WORKSPACE_NAME_KEY, workspace.name);
 }
 
+export function clearCsrfToken() {
+  sessionStorage.removeItem(CSRF_KEY);
+}
+
 export function clearSession() {
   sessionStorage.removeItem(ACCESS_KEY);
   sessionStorage.removeItem(REFRESH_KEY);
   sessionStorage.removeItem(USER_KEY);
   sessionStorage.removeItem(WORKSPACE_KEY);
   sessionStorage.removeItem(WORKSPACE_NAME_KEY);
+  clearCsrfToken();
 }
 
 export async function ensureCsrfToken(force = false) {

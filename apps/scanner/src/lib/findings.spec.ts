@@ -1,5 +1,5 @@
-import { Confidence, Severity } from '@prisma/client';
-import { dedupeFindings, FindingInput, scoreFindings, truncateEvidence } from './findings';
+import { Confidence, FindingStatus, Severity } from '@prisma/client';
+import { carriedFindingStatus, dedupeFindings, FindingInput, scoreFindings, truncateEvidence } from './findings';
 
 function finding(severity: Severity, overrides: Partial<FindingInput> = {}): FindingInput {
   return {
@@ -96,5 +96,18 @@ describe('truncateEvidence', () => {
 
   it('leaves short values untouched', () => {
     expect(truncateEvidence('short', 10)).toBe('short');
+  });
+});
+
+describe('carriedFindingStatus', () => {
+  it('keeps operator triage on findings that are still present', () => {
+    expect(carriedFindingStatus(FindingStatus.ACKNOWLEDGED)).toBe(FindingStatus.ACKNOWLEDGED);
+    expect(carriedFindingStatus(FindingStatus.FALSE_POSITIVE)).toBe(FindingStatus.FALSE_POSITIVE);
+  });
+
+  it('reopens previously resolved findings that appear again', () => {
+    expect(carriedFindingStatus(FindingStatus.RESOLVED)).toBe(FindingStatus.OPEN);
+    expect(carriedFindingStatus(FindingStatus.OPEN)).toBe(FindingStatus.OPEN);
+    expect(carriedFindingStatus(null)).toBe(FindingStatus.OPEN);
   });
 });

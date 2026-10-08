@@ -1,6 +1,16 @@
 import { NotificationType, ScanMode, ScanStatus, Severity } from '@prisma/client';
 import { ScanRunner } from './scan-runner';
 
+type RunnerInternals = {
+  persist: (workspaceId: string, assetId: string, scanId: string, findings: unknown[]) => Promise<number>;
+  complete: (scanId: string, score: number, findings: unknown[], requests: number, resolvedCount?: number) => Promise<void>;
+  begin: (scanId: string, startedAt: Date | null) => Promise<void>;
+};
+
+function internals(runner: ScanRunner) {
+  return runner as unknown as RunnerInternals;
+}
+
 describe('ScanRunner idempotency', () => {
   it('skips work when the scan is already completed', async () => {
     const prisma = {
@@ -27,15 +37,18 @@ describe('ScanRunner idempotency', () => {
   it('replaces findings for the same scan instead of appending', async () => {
     const deleteMany = jest.fn().mockResolvedValue({ count: 2 });
     const createMany = jest.fn().mockResolvedValue({ count: 1 });
+    const updateMany = jest.fn().mockResolvedValue({ count: 0 });
     const prisma = {
-      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({ finding: { deleteMany, createMany } })),
+      finding: { findMany: jest.fn().mockResolvedValue([]) },
+      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({ finding: { deleteMany, createMany, updateMany } })),
     };
     const runner = new ScanRunner(prisma as never, { status: 'ready', publish: jest.fn() } as never);
-    await (runner as unknown as { persist: Function }).persist('ws_1', 'asset_1', 'scan_1', [
+    await internals(runner).persist('ws_1', 'asset_1', 'scan_1', [
       { title: 'A', description: 'd', severity: Severity.LOW, confidence: 'HIGH', category: 'HTTP', evidence: 'e', recommendation: 'r' },
     ]);
     expect(deleteMany).toHaveBeenCalledWith({ where: { scanId: 'scan_1' } });
     expect(createMany).toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalled();
   });
 
   it('does not emit a second completion notification after a retry claims a completed scan', async () => {
@@ -47,7 +60,7 @@ describe('ScanRunner idempotency', () => {
       notification: { createMany: jest.fn() },
     };
     const runner = new ScanRunner(prisma as never, { status: 'ready', publish: jest.fn() } as never);
-    await (runner as unknown as { complete: Function }).complete('scan_1', 70, [], 1);
+    await internals(runner).complete('scan_1', 70, [], 1);
     expect(prisma.notification.createMany).not.toHaveBeenCalled();
     expect(NotificationType.SCAN_COMPLETED).toBe('SCAN_COMPLETED');
   });
@@ -60,7 +73,7 @@ describe('ScanRunner idempotency', () => {
       },
     };
     const runner = new ScanRunner(prisma as never, { status: 'ready', publish: jest.fn() } as never);
-    await expect((runner as unknown as { begin: Function }).begin('scan_1', null)).rejects.toMatchObject({ name: 'ScanCancelledError' });
+    await expect(internals(runner).begin('scan_1', null)).rejects.toMatchObject({ name: 'ScanCancelledError' });
     expect(prisma.scan.updateMany).toHaveBeenCalledWith({
       where: { id: 'scan_1', status: { in: [ScanStatus.QUEUED, ScanStatus.RUNNING] } },
       data: expect.objectContaining({ status: ScanStatus.RUNNING }),
@@ -89,7 +102,7 @@ describe('ScanRunner idempotency', () => {
       publish: jest.fn(),
     };
     const runner = new ScanRunner(prisma as never, publisher as never);
-    await expect((runner as unknown as { complete: Function }).complete('scan_1', 80, [], 2)).resolves.toBeUndefined();
+    await expect(internals(runner).complete('scan_1', 80, [], 2)).resolves.toBeUndefined();
     expect(prisma.asset.update).toHaveBeenCalled();
     expect(publisher.publish).not.toHaveBeenCalled();
   });
